@@ -1,0 +1,207 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(uuid())
+  walletAddress String @unique // Ethereum wallet address
+  nonce       String   @default(uuid()) // For signature verification
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  isActive    Boolean  @default(true)
+
+  // User balances for different tokens
+  balances   Balance[]
+  strategies Strategy[]
+  deposits   Deposit[]
+  withdrawals Withdrawal[]
+  transactions Transaction[]
+
+  @@map("users")
+}
+
+model Balance {
+  id          String  @id @default(uuid())
+  userId      String
+  tokenSymbol String  // ETH, USDC, USDT, etc.
+  tokenAddress String // Contract address
+  amount      Decimal @db.Decimal(36, 18) // High precision for crypto amounts
+  lockedAmount Decimal @default(0) @db.Decimal(36, 18) // Amount locked in active strategies
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, tokenAddress])
+  @@map("balances")
+}
+
+model Strategy {
+  id          String   @id @default(uuid())
+  userId      String
+  name        String
+  type        StrategyType
+  status      StrategyStatus @default(ACTIVE)
+  
+  // Strategy parameters (JSON for flexibility)
+  parameters  Json
+  
+  // Execution settings
+  nextExecution DateTime?
+  frequency     String? // Cron expression for DCA
+  
+  // Financial tracking
+  totalInvested Decimal @default(0) @db.Decimal(36, 18)
+  totalReceived Decimal @default(0) @db.Decimal(36, 18)
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  executions StrategyExecution[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("strategies")
+}
+
+model StrategyExecution {
+  id          String   @id @default(uuid())
+  strategyId  String
+  status      ExecutionStatus
+  
+  // Transaction details
+  fromToken   String
+  toToken     String
+  fromAmount  Decimal @db.Decimal(36, 18)
+  toAmount    Decimal? @db.Decimal(36, 18)
+  
+  // 1inch transaction details
+  txHash      String?
+  gasUsed     Decimal? @db.Decimal(36, 18)
+  gasPrice    Decimal? @db.Decimal(36, 18)
+  
+  // Error handling
+  error       String?
+  retryCount  Int @default(0)
+  
+  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+  
+  executedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("strategy_executions")
+}
+
+model Deposit {
+  id          String   @id @default(uuid())
+  userId      String
+  txHash      String   @unique
+  tokenSymbol String
+  tokenAddress String
+  amount      Decimal  @db.Decimal(36, 18)
+  status      DepositStatus @default(PENDING)
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("deposits")
+}
+
+model Withdrawal {
+  id           String   @id @default(uuid())
+  userId       String
+  toAddress    String
+  tokenSymbol  String
+  tokenAddress String
+  amount       Decimal  @db.Decimal(36, 18)
+  fee          Decimal  @db.Decimal(36, 18)
+  status       WithdrawalStatus @default(PENDING)
+  txHash       String?
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("withdrawals")
+}
+
+model Transaction {
+  id          String   @id @default(uuid())
+  userId      String
+  type        TransactionType
+  txHash      String
+  fromToken   String?
+  toToken     String?
+  fromAmount  Decimal? @db.Decimal(36, 18)
+  toAmount    Decimal? @db.Decimal(36, 18)
+  gasUsed     Decimal? @db.Decimal(36, 18)
+  gasPrice    Decimal? @db.Decimal(36, 18)
+  status      TransactionStatus
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+
+  @@map("transactions")
+}
+
+enum StrategyType {
+  DCA
+  TWAP
+  GRID
+  MOMENTUM
+  LIMIT_ORDER
+}
+
+enum StrategyStatus {
+  ACTIVE
+  PAUSED
+  STOPPED
+  COMPLETED
+}
+
+enum ExecutionStatus {
+  PENDING
+  EXECUTING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum DepositStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+}
+
+enum WithdrawalStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  SWAP
+  STRATEGY_EXECUTION
+}
+
+enum TransactionStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+} 

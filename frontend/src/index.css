@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Dark theme base styles */
+html.dark {
+  @apply bg-[#10141c] text-gray-100;
+}
+body.dark {
+  @apply bg-[#10141c] text-gray-100;
+}
