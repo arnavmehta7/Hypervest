@@ -1,0 +1,322 @@
+Here's how we can shape **Hypervest.com (Hyper1nvest Funds)** into a **modern, trustworthy, and competition-winning brand** while aligning with 1inch and your strategy-oriented vision.
+
+---
+
+## **1. Brand Positioning & Messaging**
+
+Your brand should be positioned as **“the simplest way to automate smart crypto investments”** — combining **algorithms, DCA, and advanced strategies** like TWAPs and options, while making it **accessible and safe**.
+
+### **Core Value Proposition**
+
+> **“Hypervest is your algorithmic crypto investment co-pilot — offering DCA, automated trading, and advanced 1inch-based strategies, all in one place.”**
+
+---
+
+## **2. Website Structure & Sections**
+
+### **Homepage (Trust & Simplicity)**
+
+* **Headline:**
+  “Automated Crypto Investing. Simplified.”
+  **Subheadline:**
+  “From DCA to advanced on-chain strategies, Hypervest puts your portfolio on autopilot.”
+* **Call-to-Action:** “Start Investing Now” / “Explore Smart Strategies”
+* **Hero Visuals:**
+  Animated charts with clean, minimal UI mockups of how strategies run.
+* **Trust Signals:**
+
+  * “Built on top of the 1inch Protocol”
+  * “ETHGlobal Hackathon Finalist” (when applicable)
+  * Logos of audited smart contracts (future).
+
+### **Features Page**
+
+* **DCA Made Simple** — Buy over time to reduce volatility.
+* **TWAP & Algo Strategies** — Execute large orders smartly.
+* **Advanced Hooks** — Options, automated liquidity positioning.
+* **1inch APIs** — Ultra-efficient price execution.
+* **Non-Custodial (Future Vision)** — Roadmap toward self-custody.
+
+### **How It Works Page**
+
+A 3-step visual flow:
+
+1. **Deposit** — Users send funds to a pooled wallet.
+2. **Choose Strategy** — DCA, TWAP, or algorithmic plan.
+3. **Automate** — We execute trades via 1inch APIs, reporting live.
+
+### **About Page**
+
+* Why Hypervest exists: **“Most people don’t need to day trade — they need automated, proven strategies.”**
+* Team/Tech background: Focus on your **engineering + blockchain expertise**.
+
+### **Contact & Pitch**
+
+* Signup form for early beta testers.
+* CTA for “Get Whitepaper/Deck.”
+
+---
+
+## **3. Branding Guidelines**
+
+* **Tone:** Clean, minimal, **like fintech (e.g., Wealthfront, Robinhood)** but crypto-native.
+* **Colors:**
+
+  * Primary: Deep Blue or Navy (#0D1B2A) — trust factor.
+  * Accent: Neon green or Aqua gradient — tech vibe.
+  * Background: White/light gray for modern feel.
+* **Logo Idea:** A stylized “H” (like a forward arrow), or **“Hyperwave”** design (signaling growth).
+* **Font:** Sans-serif like **Inter or DM Sans** (modern and readable).
+
+---
+
+## **4. Deck & Presentation Tips**
+
+### **Deck Flow:**
+
+1. **Problem Statement:**
+   “Most crypto investors underperform because they try to time markets or trade emotionally.”
+2. **Solution:**
+   “Hypervest offers automated investing strategies — DCA, TWAP, options — powered by 1inch’s orderbook and APIs.”
+3. **Market Validation:**
+
+   * \$1T+ crypto market.
+   * **75% of retail investors prefer automation (Robinhood, Binance Auto-Invest)**.
+4. **Why Us:**
+
+   * We combine **traditional investing strategies** with **DeFi execution (1inch)**.
+   * Simple UX + advanced backend.
+5. **Tech Advantage:**
+
+   * TWAP + cross-chain swaps + liquidity hooks via 1inch Limit Order Protocol.
+6. **Vision:**
+
+   * Start centralized (custody wallet) → **transition to non-custodial smart contracts**.
+Below is a high‑level architecture and some initial TypeScript code sketches for implementing your **initial user flow** and a **DCA strategy** on top of 1inch’s APIs and Limit Order Protocol SDK.
+
+---
+
+## 1. System Architecture
+
+```
+┌─────────┐      ┌───────────────┐      ┌───────────────┐
+│ Frontend│───▶─│  API Gateway  │───▶─│  Strategy DB  │
+│  (React)│     │ (Express/TS)  │     │ (Postgres)    │
+└─────────┘     └───────────────┘     └───────────────┘
+                      │                        ▲
+                      ▼                        │
+               ┌─────────────┐          ┌─────────────┐
+               │ Scheduler   │───▶──────│ DCA Service │
+               │ (BullMQ)    │          │ (Node/TS)   │
+               └─────────────┘          └─────────────┘
+                      │                        │
+                      ▼                        ▼
+               ┌─────────────┐          ┌──────────────┐
+               │ LimitOrder  │          │ Swap via     │
+               │ Service     │          │ 1inch API    │
+               └─────────────┘          └──────────────┘
+```
+
+1. **Frontend**: User configures a DCA plan (token pair, amount, frequency).
+2. **API Gateway**: Persists strategy to **Strategy DB**.
+3. **Scheduler**: Uses BullMQ (Redis‑backed) to enqueue jobs per plan’s cron schedule.
+4. **DCA Service**:
+
+   * For **market orders**, calls 1inch Aggregation API to build & send a swap tx.
+   * For **limit orders**, uses 1inch Limit Order Protocol SDK to create signed off‑chain orders.
+5. **On‑chain Execution**: Broadcast via ethers.js or equivalent.
+
+---
+
+## 2. Data Model (Postgres)
+
+```sql
+CREATE TABLE dca_strategies (
+  id SERIAL PRIMARY KEY,
+  user_id UUID NOT NULL,
+  from_token TEXT NOT NULL,
+  to_token TEXT NOT NULL,
+  amount_per_run NUMERIC NOT NULL,
+  frequency_cron TEXT NOT NULL,       -- e.g. '0 0 * * *' (daily at midnight)
+  use_limit_orders BOOLEAN DEFAULT FALSE,
+  slippage_pct NUMERIC DEFAULT 1.0,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+---
+
+## 3. Key Services & Flow
+
+### a) DCA Service (Market Orders)
+
+* **Check allowance**: ensure `from_token` is approved for the router.
+* **Fetch swap data**:
+
+  ```ts
+  GET https://api.1inch.io/v5.0/{chainId}/swap
+    ?fromTokenAddress={fromToken}
+    &toTokenAddress={toToken}
+    &amount={amount}
+    &fromAddress={userAddress}
+    &slippage={slippagePct}
+  ```
+
+  Returns `{ tx: { to, data, value, ... } }` ready for broadcast ([forum.moralis.io][1]).
+* **Sign & send**: use ethers.js to send the returned `tx`.
+
+### b) Limit Order Service
+
+* **Create order** off‑chain with SDK v4:
+
+  ```ts
+  import {
+    Sdk,
+    MakerTraits,
+    Address,
+    FetchProviderConnector
+  } from "@1inch/limit-order-sdk";
+  import { Wallet } from "ethers";
+
+  const sdk = new Sdk({
+    authKey: "YOUR_1INCH_API_KEY",
+    networkId: 1,
+    httpConnector: new FetchProviderConnector(),
+  });
+
+  const maker = new Wallet(PRIVATE_KEY);
+  const expiration = BigInt(Math.floor(Date.now() / 1000) + 60 * 60); // 1h
+  const makerTraits = MakerTraits.default().withExpiration(expiration);
+
+  const order = await sdk.createOrder(
+    {
+      makerAsset: new Address(fromToken),
+      takerAsset: new Address(toToken),
+      makingAmount: BigInt(amountPerRun),     // e.g. 100_000000n for 100 USDT
+      takingAmount: BigInt(/* compute via quote */),
+      maker: new Address(maker.address),
+    },
+    makerTraits
+  );
+  ```
+
+  This generates the signed limit order object you can store and later fill ([GitHub][2]).
+
+---
+
+## 4. Example: `DCAService.ts`
+
+```ts
+import fetch from "node-fetch";
+import { ethers } from "ethers";
+
+export class DCAService {
+  constructor(
+    private provider: ethers.providers.JsonRpcProvider,
+    private privateKey: string,
+    private chainId: number,
+    private slippagePct = 1
+  ) {}
+
+  async executeRun(
+    userAddress: string,
+    fromToken: string,
+    toToken: string,
+    amount: string
+  ) {
+    // 1. Build 1inch swap request
+    const url = `https://api.1inch.io/v5.0/${this.chainId}/swap`
+      + `?fromTokenAddress=${fromToken}`
+      + `&toTokenAddress=${toToken}`
+      + `&amount=${amount}`
+      + `&fromAddress=${userAddress}`
+      + `&slippage=${this.slippagePct}`;
+
+    const res = await fetch(url);
+    const { tx } = await res.json();
+
+    // 2. Sign & broadcast
+    const signer = new ethers.Wallet(this.privateKey, this.provider);
+    const receipt = await signer.sendTransaction({
+      to: tx.to,
+      data: tx.data,
+      value: ethers.BigNumber.from(tx.value || "0"),
+      gasPrice: ethers.BigNumber.from(tx.gasPrice),
+      gasLimit: ethers.BigNumber.from(tx.gas || "200000"),
+    });
+
+    return receipt.wait();
+  }
+}
+```
+
+---
+
+## 5. Example: `LimitOrderService.ts`
+
+```ts
+import {
+  Sdk,
+  MakerTraits,
+  Address,
+  FetchProviderConnector
+} from "@1inch/limit-order-sdk";
+import { Wallet, providers } from "ethers";
+
+export class LimitOrderService {
+  private sdk: Sdk;
+  private maker: Wallet;
+
+  constructor(
+    privateKey: string,
+    authKey: string,
+    networkId: number,
+    rpcUrl: string
+  ) {
+    const provider = new providers.JsonRpcProvider(rpcUrl, networkId);
+    this.maker = new Wallet(privateKey, provider);
+    this.sdk = new Sdk({
+      authKey,
+      networkId,
+      httpConnector: new FetchProviderConnector(),
+    });
+  }
+
+  async createLimitOrder(
+    fromToken: string,
+    toToken: string,
+    makingAmount: bigint,
+    takingAmount: bigint,
+    ttlSeconds = 3600
+  ) {
+    const expiration = BigInt(Math.floor(Date.now() / 1000) + ttlSeconds);
+    const traits = MakerTraits.default().withExpiration(expiration);
+    const order = await this.sdk.createOrder(
+      {
+        makerAsset: new Address(fromToken),
+        takerAsset: new Address(toToken),
+        makingAmount,
+        takingAmount,
+        maker: new Address(this.maker.address),
+      },
+      traits
+    );
+    return order;
+  }
+}
+```
+
+---
+
+### Next Steps
+
+1. **Wire up** the scheduler (e.g. BullMQ) to read active `dca_strategies` and enqueue `executeRun` calls.
+2. **Frontend**: let users preview quotes via the `/quote` endpoint and configure slippage.
+3. **Monitoring & Alerts**: track tx statuses and notify users on fill/failures.
+
+With this in place, you’ll have a working DCA flow—both **market** and **limit-based**—powered by 1inch’s Aggregation API and Limit Order Protocol. Let me know where you’d like to dive deeper next!
+
+[1]: https://forum.moralis.io/t/1inch-swap-api-with-metamask/9115?utm_source=chatgpt.com "1inch swap API with Metamask - Moralis Forum"
+[2]: https://github.com/1inch/limit-order-sdk?utm_source=chatgpt.com "1inch/limit-order-sdk - GitHub"
