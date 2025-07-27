@@ -67,7 +67,7 @@ export async function scheduleStrategyExecutions() {
 
 // Monitor strategy schedules (run every minute)
 export function startStrategyMonitor() {
-  setInterval(scheduleStrategyExecutions, 60 * 1000); // Every minute
+  setInterval(scheduleStrategyExecutions, 30 * 1000); // Every 30 seconds
   logger.info('Strategy monitor started');
 }
 

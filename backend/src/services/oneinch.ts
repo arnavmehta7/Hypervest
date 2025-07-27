@@ -62,7 +62,7 @@ export class OneInchService {
 
   constructor() {
     this.actualChainId = config.CHAIN_ID;
-    this.apiChainId = 1; // Force mainnet for 1inch API calls
+    this.apiChainId = this.actualChainId;
     this.baseURL = config.ONEINCH_BASE_URL || 'https://api.1inch.dev';
     
     this.client = axios.create({

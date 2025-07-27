@@ -3,6 +3,9 @@ import { OneInchService } from '../services/oneinch';
 import { BlockchainService } from '../services/blockchain';
 import { logger } from '../utils/logger';
 import { Decimal } from '@prisma/client/runtime/library';
+import { ethers } from 'ethers';
+
+const cronParser = require('cron-parser');
 
 export interface DCAParameters {
   fromToken: string;
@@ -27,6 +30,16 @@ export class DCAStrategy {
     try {
       // Validate parameters
       await this.validateParameters(parameters);
+
+      // Get user to validate wallet address
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { walletAddress: true },
+      });
+
+      if (!user || !user.walletAddress || !ethers.isAddress(user.walletAddress)) {
+        throw new Error('User does not have a valid wallet address');
+      }
 
       // Check if user has sufficient balance
       const userBalance = await prisma.balance.findUnique({
@@ -94,6 +107,11 @@ export class DCAStrategy {
 
       const params = strategy.parameters as unknown as DCAParameters;
       
+      // Validate user wallet address
+      if (!strategy.user.walletAddress || !ethers.isAddress(strategy.user.walletAddress)) {
+        throw new Error('Invalid user wallet address');
+      }
+
       // Update execution with token details
       await prisma.strategyExecution.update({
         where: { id: execution.id },
@@ -133,14 +151,48 @@ export class DCAStrategy {
         throw new Error('Transaction failed');
       }
 
+      // Parse transaction logs to get actual received amount
+      const actualReceivedAmount = await this.parseSwapReceivedAmount(
+        receipt,
+        params.toToken,
+        this.blockchainService.getMasterAddress()
+      );
+
+      // Transfer received tokens to user's wallet
+      let userTransferTxHash: string;
+      try {
+        userTransferTxHash = await this.transferTokensToUser(
+          strategy.user.walletAddress,
+          params.toToken,
+          actualReceivedAmount
+        );
+      } catch (transferError) {
+        logger.error('Failed to transfer tokens to user wallet:', transferError);
+        
+        // Mark execution as partially completed (swap succeeded but transfer failed)
+        await prisma.strategyExecution.update({
+          where: { id: execution.id },
+          data: {
+            status: 'FAILED',
+            error: `Swap completed but transfer failed: ${transferError instanceof Error ? transferError.message : 'Unknown error'}`,
+            txHash,
+            toAmount: new Decimal(actualReceivedAmount),
+          },
+        });
+        
+        // Tokens are stuck in master wallet - this needs manual intervention
+        logger.error(`URGENT: Tokens stuck in master wallet for user ${strategy.userId}. Amount: ${actualReceivedAmount} of token ${params.toToken}`);
+        throw new Error('Swap completed but token transfer to user wallet failed');
+      }
+
       // Update execution as completed
       await prisma.strategyExecution.update({
         where: { id: execution.id },
         data: {
           status: 'COMPLETED',
           txHash,
-          gasUsed: new Decimal(receipt.gasUsed.toString()),
-          gasPrice: new Decimal(receipt.gasPrice?.toString() || '0'),
+          toAmount: new Decimal(actualReceivedAmount),
+          // Remove gas tracking since gas is sponsored
         },
       });
 
@@ -151,20 +203,21 @@ export class DCAStrategy {
           totalInvested: {
             increment: new Decimal(params.amountPerExecution),
           },
+          totalReceived: {
+            increment: new Decimal(actualReceivedAmount),
+          },
           nextExecution: this.calculateNextExecution(params.frequency),
         },
       });
 
-      // Update user balances
+      // Update user balances (only deduct from locked amount since tokens are transferred to user wallet)
       await this.updateUserBalances(
         strategy.userId,
         params.fromToken,
-        params.toToken,
-        params.amountPerExecution,
-        receipt
+        params.amountPerExecution
       );
 
-      logger.info(`DCA execution completed: ${execution.id}, tx: ${txHash}`);
+      logger.info(`DCA execution completed: ${execution.id}, swap tx: ${txHash}, transfer tx: ${userTransferTxHash}`);
     } catch (error) {
       logger.error(`DCA execution failed: ${execution.id}`, error);
       
@@ -233,38 +286,208 @@ export class DCAStrategy {
   }
 
   private calculateNextExecution(frequency: string): Date {
-    // Simple implementation - in production, use a proper cron parser
-    const now = new Date();
-    const parts = frequency.split(' ');
-    
-    if (parts.length >= 5) {
-      // Daily execution (0 0 * * *)
-      if (parts[0] === '0' && parts[1] === '0') {
-        now.setDate(now.getDate() + 1);
-        now.setHours(0, 0, 0, 0);
-        return now;
+    try {
+      // Use proper cron parser library instead of manual parsing
+      const interval = cronParser.parseExpression(frequency, {
+        currentDate: new Date(),
+        tz: 'UTC'
+      });
+      return interval.next().toDate();
+    } catch (error) {
+      logger.error('Error parsing cron expression:', error);
+      // Fallback to 1 hour from now if cron parsing fails
+      const fallback = new Date();
+      fallback.setHours(fallback.getHours() + 1);
+      return fallback;
+    }
+  }
+
+  /**
+   * Parse transaction logs to get actual received amount from swap
+   */
+  private async parseSwapReceivedAmount(
+    receipt: ethers.TransactionReceipt,
+    toToken: string,
+    masterAddress: string
+  ): Promise<string> {
+    try {
+      // Normalize addresses for comparison
+      const normalizedMasterAddress = masterAddress.toLowerCase();
+      const normalizedToToken = toToken.toLowerCase();
+      
+      // Check if it's ETH (native token)
+      const isETH = normalizedToToken === '0x0000000000000000000000000000000000000000' || 
+                    normalizedToToken === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+
+      if (isETH) {
+        return await this.parseETHReceived(receipt, normalizedMasterAddress);
+      } else {
+        return await this.parseERC20Received(receipt, normalizedToToken, normalizedMasterAddress);
       }
-      // Hourly execution (0 * * * *)
-      if (parts[0] === '0' && parts[1] === '*') {
-        now.setHours(now.getHours() + 1, 0, 0, 0);
-        return now;
+    } catch (error) {
+      logger.error('Error parsing swap received amount:', error);
+      throw new Error('Failed to parse received amount from transaction');
+    }
+  }
+
+  /**
+   * Parse ETH received from swap transaction
+   */
+  private async parseETHReceived(
+    receipt: ethers.TransactionReceipt,
+    masterAddress: string
+  ): Promise<string> {
+    // WETH Withdrawal event: Withdrawal(address indexed src, uint wad)
+    const wethWithdrawalInterface = new ethers.Interface([
+      'event Withdrawal(address indexed src, uint256 wad)'
+    ]);
+
+    // WETH contract addresses for different networks
+    const wethAddresses = [
+      '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', // Mainnet WETH
+      '0xfff9976782d46cc05630d1f6ebab18b2324d6b14', // Sepolia WETH
+      '0xb4fbf271143f4fbf0b4f4d67c7e0d5d3f8c13fb8',  // Görli WETH (backup)
+      '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1', // Base WETH
+    ];
+
+    // Look for WETH withdrawal events
+    for (const log of receipt.logs) {
+      try {
+        // Check if this log is from a WETH contract
+        if (wethAddresses.includes(log.address.toLowerCase())) {
+          const parsedLog = wethWithdrawalInterface.parseLog({
+            topics: log.topics,
+            data: log.data
+          });
+
+          if (parsedLog && parsedLog.name === 'Withdrawal') {
+            const withdrawalAddress = parsedLog.args.src.toLowerCase();
+            if (withdrawalAddress === masterAddress) {
+              return parsedLog.args.wad.toString();
+            }
+          }
+        }
+      } catch (parseError) {
+        // Skip logs that don't match WETH withdrawal format
+        continue;
       }
     }
 
-    // Default to 1 hour from now
-    now.setHours(now.getHours() + 1);
-    return now;
+    // Fallback: look for internal ETH transfers in transaction traces
+    // This would require trace_transaction RPC call, which is more complex
+    logger.warn('No WETH withdrawal found, ETH amount calculation may be inaccurate');
+    return '0';
+  }
+
+  /**
+   * Parse ERC20 tokens received from swap transaction
+   */
+  private async parseERC20Received(
+    receipt: ethers.TransactionReceipt,
+    tokenAddress: string,
+    masterAddress: string
+  ): Promise<string> {
+    // ERC20 Transfer event: Transfer(address indexed from, address indexed to, uint256 value)
+    const transferInterface = new ethers.Interface([
+      'event Transfer(address indexed from, address indexed to, uint256 value)'
+    ]);
+
+    let totalReceived = BigInt(0);
+
+    // Parse all Transfer events for the target token
+    for (const log of receipt.logs) {
+      try {
+        // Only process logs from the target token contract
+        if (log.address.toLowerCase() !== tokenAddress) {
+          continue;
+        }
+
+        const parsedLog = transferInterface.parseLog({
+          topics: log.topics,
+          data: log.data
+        });
+
+        if (parsedLog && parsedLog.name === 'Transfer') {
+          const toAddress = parsedLog.args.to.toLowerCase();
+          
+          // Sum up all transfers TO our master address
+          if (toAddress === masterAddress) {
+            totalReceived += BigInt(parsedLog.args.value.toString());
+          }
+        }
+      } catch (parseError) {
+        // Skip logs that don't match Transfer event format
+        continue;
+      }
+    }
+
+    if (totalReceived === BigInt(0)) {
+      throw new Error(`No ${tokenAddress} transfers found to master address`);
+    }
+
+    return totalReceived.toString();
+  }
+
+  /**
+   * Transfer tokens from master wallet to user's wallet
+   */
+  private async transferTokensToUser(
+    userWalletAddress: string,
+    tokenAddress: string,
+    amount: string
+  ): Promise<string> {
+    try {
+      logger.info(`Transferring ${amount} of ${tokenAddress} to user wallet: ${userWalletAddress}`);
+
+      // Check if it's ETH (native token)
+      if (tokenAddress === '0x0000000000000000000000000000000000000000' || 
+          tokenAddress === '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE') {
+        
+        // ETH transfer
+        const txHash = await this.blockchainService.sendTransaction({
+          to: userWalletAddress,
+          value: amount,
+          data: '0x',
+        });
+
+        // Wait for confirmation
+        await this.blockchainService.waitForTransaction(txHash, 1);
+        return txHash;
+
+      } else {
+        // ERC20 token transfer using ethers.js Interface (cleaner approach)
+        const erc20Interface = new ethers.Interface([
+          'function transfer(address to, uint256 amount) returns (bool)'
+        ]);
+        
+        const transferData = erc20Interface.encodeFunctionData('transfer', [
+          userWalletAddress,
+          amount
+        ]);
+        
+        const txHash = await this.blockchainService.sendTransaction({
+          to: tokenAddress,
+          data: transferData,
+          value: '0',
+        });
+
+        // Wait for confirmation
+        await this.blockchainService.waitForTransaction(txHash, 1);
+        return txHash;
+      }
+    } catch (error) {
+      logger.error('Error transferring tokens to user:', error);
+      throw new Error('Failed to transfer tokens to user wallet');
+    }
   }
 
   private async updateUserBalances(
     userId: string,
     fromToken: string,
-    toToken: string,
-    fromAmount: string,
-    receipt: any
+    fromAmount: string
   ): Promise<void> {
     try {
-      // Deduct from token balance
+      // Only deduct from token balance and locked amount since tokens are transferred directly to user
       await prisma.balance.update({
         where: {
           userId_tokenAddress: {
@@ -278,8 +501,8 @@ export class DCAStrategy {
         },
       });
 
-      // Note: In a real implementation, you'd need to calculate the received amount
-      // from the transaction logs or get it from 1inch API response
+      // Note: We don't add to destination token balance since tokens go directly to user's wallet
+      // The user's external wallet balance will be updated, but our internal tracking doesn't need to
       
       logger.info(`Updated balances for user ${userId} after DCA execution`);
     } catch (error) {

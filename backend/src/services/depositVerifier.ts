@@ -30,10 +30,9 @@ export class DepositVerifierService {
    */
   async verifyDeposit(txHash: string): Promise<DepositVerification> {
     try {
-      logger.info(`Verifying deposit transaction: ${txHash}`);
-
       // Get transaction receipt
       const provider = this.blockchainService.getProvider();
+      logger.info(`Verifying deposit transaction: ${txHash}, provider: ${provider}, masterWalletAddress: ${this.masterWalletAddress}`);
       const tx = await provider.getTransaction(txHash);
       
       if (!tx) {

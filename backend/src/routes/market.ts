@@ -4,6 +4,8 @@ import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
 import { apiRateLimiter } from '../middleware/security';
 import { OneInchService } from '../services/oneinch';
 import { logger } from '../utils/logger';
+import { config } from '../config/env';
+import axios from 'axios';
 
 const router: express.Router = express.Router();
 const oneInchService = new OneInchService();
@@ -85,20 +87,71 @@ router.get('/protocols', async (req: AuthenticatedRequest, res: Response) => {
 // Get gas price information
 router.get('/gas-price', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    // This would typically come from a gas price oracle
-    // For now, we'll return a simple response
+    // Call 1inch gas price API
+    const url = `https://api.1inch.dev/gas-price/v1.6/${config.CHAIN_ID}`;
+    
+    const apiConfig = {
+      headers: {
+        Authorization: `Bearer ${config.ONEINCH_API_KEY}`,
+      },
+      params: {},
+      paramsSerializer: {
+        indexes: null,
+      },
+    };
+
+    const response = await axios.get(url, apiConfig);
+    const gasData = response.data;
+
+    // Helper function to convert wei to gwei
+    const weiToGwei = (weiValue: string): string => {
+      return (parseInt(weiValue) / 1e9).toFixed(2);
+    };
+
+    // Format response to match existing structure and convert to gwei
+    const formattedResponse = {
+      gasPrice: {
+        low: weiToGwei(gasData.low?.maxFeePerGas || '20000000000'), // fallback 20 gwei
+        medium: weiToGwei(gasData.medium?.maxFeePerGas || '25000000000'), // fallback 25 gwei  
+        high: weiToGwei(gasData.high?.maxFeePerGas || '30000000000'), // fallback 30 gwei
+        instant: weiToGwei(gasData.instant?.maxFeePerGas || '35000000000'), // fallback 35 gwei
+      },
+      priorityFee: {
+        low: weiToGwei(gasData.low?.maxPriorityFeePerGas || '1000000000'), // fallback 1 gwei
+        medium: weiToGwei(gasData.medium?.maxPriorityFeePerGas || '1500000000'), // fallback 1.5 gwei
+        high: weiToGwei(gasData.high?.maxPriorityFeePerGas || '2000000000'), // fallback 2 gwei
+        instant: weiToGwei(gasData.instant?.maxPriorityFeePerGas || '3000000000'), // fallback 3 gwei
+      },
+      baseFee: weiToGwei(gasData.baseFee || '10000000000'), // fallback 10 gwei
+      unit: 'gwei',
+      chainId: config.CHAIN_ID,
+      timestamp: new Date().toISOString(),
+    };
+
+    return res.json(formattedResponse);
+  } catch (error) {
+    logger.error('Error fetching gas price from 1inch API:', error);
+    
+    // Fallback to default values if API fails
     return res.json({
       gasPrice: {
-        standard: '20',
-        fast: '25',
-        instant: '30',
+        low: '20.00',
+        medium: '25.00', 
+        high: '30.00',
+        instant: '35.00',
       },
+      priorityFee: {
+        low: '1.00',
+        medium: '1.50',
+        high: '2.00', 
+        instant: '3.00',
+      },
+      baseFee: '10.00',
       unit: 'gwei',
+      chainId: config.CHAIN_ID,
       timestamp: new Date().toISOString(),
+      note: 'Fallback values - API unavailable',
     });
-  } catch (error) {
-    logger.error('Error fetching gas price:', error);
-    return res.status(500).json({ error: 'Failed to fetch gas price' });
   }
 });
 
