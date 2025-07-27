@@ -28,10 +28,10 @@ export const createRateLimiter = (windowMs?: number, max?: number) => {
 };
 
 // Strict rate limiting for authentication endpoints
-export const authRateLimiter = createRateLimiter(15 * 60 * 10000, 5); // 5 requests per 15 minutes
+export const authRateLimiter = createRateLimiter(15 * 60 * 100000, 5); // 5 requests per 15 minutes
 
 // Rate limiting for trading operations
-export const tradingRateLimiter = createRateLimiter(60 * 10000, 10); // 10 requests per minute
+export const tradingRateLimiter = createRateLimiter(60 * 100000, 10); // 10 requests per minute
 
 // General API rate limiting
 export const apiRateLimiter = createRateLimiter();
