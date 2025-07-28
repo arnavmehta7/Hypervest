@@ -66,18 +66,6 @@ function Header() {
             </nav>
           )}
 
-          {isDashboard && (
-            <nav className="hidden md:flex space-x-8">
-              <button 
-                onClick={() => navigate('/strategies')}
-                className="text-gray-700 dark:text-gray-200 hover:text-[#0D1B2A] dark:hover:text-white transition-colors font-medium"
-              >
-                Strategies
-              </button>
-              <span className="text-emerald-600 dark:text-emerald-400 font-medium">Dashboard</span>
-            </nav>
-          )}
-
           {isStrategies && (
             <nav className="hidden md:flex space-x-8">
               <button 
@@ -87,6 +75,17 @@ function Header() {
                 Dashboard
               </button>
               <span className="text-emerald-600 dark:text-emerald-400 font-medium">Strategies</span>
+            </nav>
+          )}
+          {isDashboard && (
+            <nav className="hidden md:flex space-x-8">
+              <span className="text-emerald-600 dark:text-emerald-400 font-medium">Dashboard</span>
+              <button 
+                onClick={() => navigate('/strategies')}
+                className="text-gray-700 dark:text-gray-200 hover:text-[#0D1B2A] dark:hover:text-white transition-colors font-medium"
+              >
+                Strategies
+              </button>
             </nav>
           )}
 
@@ -493,6 +492,7 @@ function Dashboard() {
   const [depositAddress, setDepositAddress] = useState('');
   const [depositTxHash, setDepositTxHash] = useState('');
   const [depositStatus, setDepositStatus] = useState<'idle' | 'getting-address' | 'waiting-transfer' | 'sending' | 'confirming' | 'success' | 'error'>('idle');
+  const [currentBalance, setCurrentBalance] = useState('0');
 
   // USDC contract address on Arbitrum One
   const USDC_CONTRACT_ADDRESS = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
@@ -693,6 +693,56 @@ function Dashboard() {
     }
   };
 
+  // function for getting user's current balance
+  const getBalance = async () => {
+    try {
+      if (!address) {return;}
+      // if no auth token, return
+      const authToken = localStorage.getItem('authToken');
+      if (!authToken) {
+        console.warn('No auth token found, cannot fetch balance');
+        return;
+      }
+      // calling the /api/wallet/balances endpoint
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/wallet/balances`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Wallet ${authToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      if (!response.ok) {
+        throw new Error('Failed to fetch balance');
+      }
+      const data = await response.json();
+
+      let balances = data.balances;
+      console.log('USDC balances:', balances);
+      let usdcAmount = 0;
+      for (let balance of balances) {
+          usdcAmount += Number(balance.amount);
+      }
+      setCurrentBalance(usdcAmount.toFixed(5));
+      console.log('Current balance data:', usdcAmount);
+
+    }
+    catch (error) {
+      console.error('Failed to fetch balance:', error);
+    }
+  }
+
+  // Fetch current balance on mount
+  useEffect(() => {
+    if (address) {
+      getBalance();
+      // Set up interval to fetch balance every 10 seconds
+      const interval = setInterval(() => {
+        getBalance();
+      }, 10000); 
+      return () => clearInterval(interval); // Cleanup on unmount
+    }
+  }, [address]);
+
   return (
     <div className="min-h-screen bg-[#10141c] text-gray-100">
       <div className="max-w-7xl mx-auto px-8 sm:px-12 lg:px-16 pt-32 pb-20">
@@ -702,12 +752,9 @@ function Dashboard() {
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
               <div className="mb-8 lg:mb-0">
                 <div className="text-gray-400 text-sm font-medium mb-3">TOTAL BALANCE</div>
-                <div className="text-4xl font-bold text-white mb-3">$45,723.89</div>
-                <div className="text-emerald-400 font-semibold flex items-center gap-2 text-sm">
-                  <ArrowRight className="w-4 h-4 rotate-90" />
-                  <span>+2.34%</span>
-                  <span className="text-gray-400">(24h)</span>
-                </div>
+                <div className="text-4xl font-bold text-white mb-3"> {
+                  currentBalance ? `$${parseFloat(currentBalance).toLocaleString()}` : 'Loading...'
+                  }</div>
             </div>
             <button 
                 className="bg-gradient-to-r from-emerald-500 to-cyan-500 text-white font-semibold px-8 py-4 rounded-xl shadow-lg hover:from-emerald-600 hover:to-cyan-600 transition-all w-full lg:w-auto"
