@@ -1,6 +1,6 @@
 // API Configuration
 export const API_CONFIG = {
-  BASE_URL: 'http://192.168.1.5:3000',
+  BASE_URL: fetch(`${import.meta.env.VITE_API_BASE_URL}`),
   ENDPOINTS: {
     AUTH: {
       NONCE: '/api/auth/nonce',

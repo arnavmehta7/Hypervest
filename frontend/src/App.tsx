@@ -29,8 +29,8 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { useAccount, useConfig } from 'wagmi';
-import { writeContract } from '@wagmi/core';
+import { useAccount, useConfig, useFeeData, useEstimateGas } from 'wagmi';
+import { writeContract, estimateGas } from '@wagmi/core';
 import { parseUnits } from 'viem';
 
 // Shared Header Component
@@ -480,6 +480,14 @@ function Home() {
 function Dashboard() {
   const { address } = useAccount();
   const config = useConfig();
+  const { data: feeData } = useFeeData({
+    chainId: 42161, // Arbitrum One
+    formatUnits: 'gwei', // Format the units
+    query: {
+      refetchInterval: 2000, // Refetch every 2 seconds
+      staleTime: 2000, // Time after which data is considered stale
+    }
+  });
   const [showDepositModal, setShowDepositModal] = useState(false);
   const [depositAmount, setDepositAmount] = useState('');
   const [depositAddress, setDepositAddress] = useState('');
@@ -518,8 +526,8 @@ function Dashboard() {
       console.log('📤 To:', toAddress);
       console.log('💵 Amount:', depositAmount, 'USDC');
       
-      // Execute the transfer
-      const hash = await writeContract(config, {
+      // Prepare transaction data
+      const transactionData = {
         address: USDC_CONTRACT_ADDRESS as `0x${string}`,
         abi: transferAbi,
         functionName: 'transfer',
@@ -527,7 +535,50 @@ function Dashboard() {
           toAddress as `0x${string}`,
           parseUnits(depositAmount, 6)
         ]
-      });
+      } as const;
+
+      // Execute the transfer with proper gas estimation
+      console.log('⛽ Using proper gas estimation for USDC transfer...');
+      
+      const txOptions: any = { ...transactionData };
+      
+      // Set conservative gas limit
+      txOptions.gas = BigInt(65000);
+      
+      // Use fee data if available
+      if (feeData) {
+        console.log('⛽ Fee data available:', {
+          gasPrice: feeData.gasPrice,
+          maxFeePerGas: feeData.maxFeePerGas, 
+          maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
+          formatted: feeData.formatted
+        });
+        
+        // For EIP-1559 transactions (Arbitrum One supports this)
+        if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+          // Option 1: Use max fees for reliability (current approach)
+          // txOptions.maxFeePerGas = feeData.maxFeePerGas;
+          // txOptions.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
+          
+          // Option 2: Use reduced fees for cost optimization (your suggestion)
+          // Reduce fees by 20% to save on gas costs (but slower confirmation)
+          const reducedMaxFee = (feeData.maxFeePerGas * BigInt(80)) / BigInt(100);
+          const reducedPriorityFee = (feeData.maxPriorityFeePerGas * BigInt(80)) / BigInt(100);
+          
+          txOptions.maxFeePerGas = reducedMaxFee;
+          txOptions.maxPriorityFeePerGas = reducedPriorityFee;
+          console.log('⛽ Using reduced EIP-1559 fees (80% of max) for cost optimization');
+        } else if (feeData.gasPrice) {
+          // Reduce legacy gas price by 20% for cost savings
+          const reducedGasPrice = (feeData.gasPrice * BigInt(80)) / BigInt(100);
+          txOptions.gasPrice = reducedGasPrice;
+          console.log('⛽ Using reduced legacy gas price (80% of recommended)');
+        }
+      } else {
+        console.log('⛽ No fee data available, letting wallet estimate');
+      }
+      
+      const hash = await writeContract(config, txOptions);
 
       setDepositTxHash(hash);
       setDepositStatus('waiting-transfer');
@@ -549,7 +600,7 @@ function Dashboard() {
         throw new Error('No auth token found');
       }
 
-      const response = await fetch('http://192.168.1.5:3000/api/wallet/deposit-address', {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://192.168.1.10:3000'}/api/wallet/deposit-address`, {
         method: 'GET',
         headers: {
           'Authorization': `Wallet ${authToken}`,
@@ -591,7 +642,7 @@ function Dashboard() {
 
       console.log('💳 Submitting deposit with tx hash:', depositTxHash);
       
-      const response = await fetch('http://192.168.1.5:3000/api/wallet/deposits', {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://192.168.1.10:3000'}/api/wallet/deposits`, {
         method: 'POST',
         headers: {
           'Authorization': `Wallet ${authToken}`,

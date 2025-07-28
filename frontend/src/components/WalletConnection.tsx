@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useAccount, useConnect, useDisconnect, useSwitchChain, useSignMessage } from 'wagmi';
+import { useAccount, useConnect, useDisconnect, useSwitchChain, useSignMessage, useFeeData } from 'wagmi';
 import { Wallet, ChevronDown, LogOut, Copy, Check, AlertCircle, RefreshCw } from 'lucide-react';
 import { ARBITRUM_CONFIG } from '../config/api';
 
@@ -12,6 +12,7 @@ export function WalletConnection() {
   const { disconnect } = useDisconnect();
   const { switchChain } = useSwitchChain();
   const { signMessageAsync } = useSignMessage();
+  const { data: feeData } = useFeeData(); // Get current gas prices
   const [showDropdown, setShowDropdown] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
@@ -52,7 +53,7 @@ export function WalletConnection() {
 
       // Step 1: Get nonce
       console.log('📝 Step 1: Getting nonce...');
-      const nonceResponse = await fetch('http://192.168.1.5:3000/api/auth/nonce', {
+      const nonceResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://192.168.1.10:3000'}/api/auth/nonce`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -83,7 +84,7 @@ export function WalletConnection() {
 
       // Step 3: Authenticate
       console.log('🔓 Step 3: Authenticating...');
-      const authResponse = await fetch('http://192.168.1.5:3000/api/auth/authenticate', {
+      const authResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://192.168.1.10:3000'}/api/auth/authenticate` , {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -117,7 +118,7 @@ export function WalletConnection() {
       // Get user profile
       try {
         console.log('\n👤 Testing User Profile...');
-        const profileResponse = await fetch('http://192.168.1.5:3000/api/auth/profile', {
+        const profileResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://192.168.1.10:3000'}/api/auth/profile`, {
           method: 'GET',
           headers: {
             'Authorization': `Wallet ${authToken}`

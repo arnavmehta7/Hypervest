@@ -2,7 +2,7 @@ const { ethers } = require('ethers');
 const axios = require('axios');
 
 // Configuration
-const API_BASE_URL = process.env.API_BASE_URL || 'http://192.168.1.5:3000';
+const API_BASE_URL = process.env.API_BASE_URL || fetch(`${import.meta.env.VITE_API_BASE_URL}`);
 const ARBITRUM_RPC = process.env.ARBITRUM_RPC || 'https://arb1.arbitrum.io/rpc'; // Arbitrum One RPC
 
 // Tokens on Arbitrum One (for blockchain operations)

@@ -7,7 +7,6 @@ This frontend application has been configured to work exclusively with the Arbit
 - **Default Network**: Arbitrum One (Chain ID: 42161)
 - **RPC URL**: https://arb1.arbitrum.io/rpc
 - **Explorer**: https://arbiscan.io
-- **Backend API**: http://192.168.1.5:3000
 
 ## Key Features
 
@@ -68,7 +67,6 @@ npm run build
 ## API Integration
 
 The frontend is configured to communicate with the backend API deployed at:
-`http://192.168.1.5:3000`
 
 All API calls are routed through the `apiService` in `src/services/api.ts` with proper authentication headers.
 
