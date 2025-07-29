@@ -33,6 +33,7 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { useAccount, useConfig, useFeeData, useEstimateGas } from 'wagmi';
 import { writeContract, estimateGas } from '@wagmi/core';
 import { parseUnits } from 'viem';
+// import { formatUnits } from 'ethers';
 
 // Shared Header Component
 function Header() {
@@ -765,21 +766,16 @@ function Dashboard() {
   }
 
   // function for getting 1inch token balances
+
+  
   const get1inchBalances = async () => {
     try {
-      if (!address) {return;}
-      
+      if (!address) return;
+  
       console.log('🔍 Fetching 1inch token balances for:', address);
-      
-      const url = `https://api.1inch.dev/balance/v1.2/42161/balances/${address}`;
-      
-      const config = {
-        headers: {
-          Authorization: "Bearer PG0QPjOuHKZ7R22Z5aPUclbNqL2Q7w6P",
-        },
-      };
-      
-      // Common Arbitrum tokens to check
+  
+      const url = `${import.meta.env.VITE_API_BASE_URL}/api/balances`;
+  
       const body = {
         tokens: [
           "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", // USDC
@@ -788,62 +784,84 @@ function Dashboard() {
           "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8", // USDC.e
           "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f", // WBTC
           "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", // DAI
+          "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", // ETH
         ],
+        walletAddress: address,
       };
-
-      const response = await axios.post(url, body, config);
+  
+      const response = await axios.post(url, body);
       console.log('📊 1inch balance data:', response.data);
-      
-      // Parse and filter non-zero balances
-      const nonZeroBalances = parseNonZeroBalances(response.data);
+  
+      const nonZeroBalances = parseNonZeroBalances(response.data); 
       console.log('💰 Non-zero token balances:', nonZeroBalances);
-      
+  
       setTokenBalances(nonZeroBalances);
     } catch (error) {
-      console.error('Failed to fetch 1inch balances:', error);
-      // Set empty array on error to prevent showing stale data
+      console.error('❌ Failed to fetch 1inch balances:', error);
       setTokenBalances([]);
     }
-  }
-
-  // Parse and filter non-zero balances
+  };
+  
+  // ✨ Helper to format and filter balances
   const parseNonZeroBalances = (balanceData: any): Array<{
     token: string;
     symbol: string;
-    name: string;
-    balance: string;
-    formattedBalance: string;
-    decimals: number;
-    usdValue?: number;
+    formattedBalance: number;
+    // usdValue?: number;
   }> => {
     const nonZeroBalances = [];
-    
-    if (balanceData && balanceData.balances) {
-      for (const [tokenAddress, tokenData] of Object.entries(balanceData.balances)) {
-        const data = tokenData as any;
-        
-        // Check if balance is greater than 0
-        if (data.balance && BigInt(data.balance) > 0n) {
-          const decimals = data.decimals || 18;
-          const balance = data.balance;
-          const formattedBalance = (parseFloat(balance) / Math.pow(10, decimals)).toFixed(6);
-          
-          nonZeroBalances.push({
-            token: tokenAddress,
-            symbol: data.symbol || 'Unknown',
-            name: data.name || 'Unknown Token',
-            balance: balance,
-            formattedBalance: formattedBalance,
-            decimals: decimals,
-            usdValue: data.usdValue || 0,
-          });
+  
+    /*
+      {
+        "addy1": ...#0D1B2A
+        "addy2": "100000000000000000        
+      }
+
+      -> [
+      {address, name, balance}
+      ]
+    */
+    const tokenAddressToTokenNameMap: Record<string, string> = {
+      "0xaf88d065e77c8cc2239327c5edb3a432268e5831": "USDC",
+      "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9": "USDT",
+      "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1": "WETH",
+      "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8": "USDC.e",
+      "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f": "WBTC",
+      "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1": "DAI",
+      "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "ETH",
+    };
+
+    const tokenAddressToDecimalsMap: Record<string, number> = {
+      "0xaf88d065e77c8cc2239327c5edb3a432268e5831": 6, // USDC
+      "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9": 6, // USDT
+      "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1": 18, // WETH
+      "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8": 6, // USDC.e
+      "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f": 8, // WBTC
+      "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1": 18, // DAI
+      "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": 18, // ETH
+    };
+
+    if (balanceData) {
+      for (const [tokenAddress, tokenAmount] of Object.entries(balanceData)) {
+        const data = tokenAmount as any;
+        console.log(`🔍 Processing token: ${tokenAddress}`, data);
+        let tokenValue = parseFloat(data ?? '0');
+        if (isNaN(tokenValue) || tokenValue <= 0) {
+          console.warn(`⚠️ Skipping zero or invalid balance for token: ${tokenAddress}`);
+          continue; // Skip zero or invalid balances
         }
+        nonZeroBalances.push({
+          token: tokenAddress,
+          symbol: tokenAddressToTokenNameMap[tokenAddress] || 'Unknown',
+          formattedBalance: tokenValue / Math.pow(10, tokenAddressToDecimalsMap[tokenAddress] || 18), // Convert to human-readable format
+          // usdValue: data.usdValue ?? 0,
+        });
       }
     }
-    
+  
     return nonZeroBalances;
-  }
-
+  };
+  
   // Unified refresh function with loading state
   const handleRefresh = async () => {
     if (isRefreshing || !address) return;
@@ -927,21 +945,20 @@ function Dashboard() {
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-3">
-                        <div className="w-8 h-8 bg-gradient-to-br from-emerald-400 to-cyan-500 rounded-full flex items-center justify-center">
+                        {/* <div className="w-8 h-8 bg-gradient-to-br from-emerald-400 to-cyan-500 rounded-full flex items-center justify-center">
                           <span className="text-white font-bold text-xs">
-                            {token.symbol.slice(0, 2).toUpperCase()}
+                            {token.symbol.toUpperCase()}
                           </span>
-                        </div>
+                        </div> */}
                         <div>
                           <div className="font-semibold text-white text-sm">{token.symbol}</div>
-                          <div className="text-xs text-gray-400">{token.name}</div>
                         </div>
                       </div>
                       <div className="text-right">
                         <div className="text-white font-medium text-sm">{token.formattedBalance}</div>
-                        {token.usdValue > 0 && (
+                        {/* {token.usdValue > 0 && (
                           <div className="text-emerald-400 text-xs">${token.usdValue.toFixed(2)}</div>
-                        )}
+                        )} */}
                       </div>
                     </div>
                   </div>
@@ -1380,7 +1397,7 @@ function Swap() {
       
       const response = await axios.get(url, {
         headers: {
-          Authorization: "Bearer PG0QPjOuHKZ7R22Z5aPUclbNqL2Q7w6P",
+          Authorization: `${import.meta.env.VITE_1INCH_API_KEY}`,
         },
       });
       
@@ -1420,7 +1437,7 @@ function Swap() {
       
       const response = await axios.get(swapUrl, {
         headers: {
-          Authorization: "Bearer PG0QPjOuHKZ7R22Z5aPUclbNqL2Q7w6P",
+          Authorization: `${import.meta.env.VITE_1INCH_API_KEY}`,
         },
       });
       
