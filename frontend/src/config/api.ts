@@ -31,6 +31,16 @@ export const API_CONFIG = {
   },
 };
 
+// 1inch API Configuration
+export const ONEINCH_CONFIG = {
+  BASE_URL: 'https://api.1inch.dev',
+  API_KEY: import.meta.env.VITE_ONEINCH_API_KEY || 'PG0QPjOuHKZ7R22Z5aPUclbNqL2Q7w6P',
+  ENDPOINTS: {
+    BALANCES: (chainId: number, address: string) => `/balance/v1.2/${chainId}/balances/${address}`,
+    TOKENS: (chainId: number) => `/token/v1.2/${chainId}`,
+  },
+};
+
 // Arbitrum One Network Configuration
 export const ARBITRUM_CONFIG = {
   CHAIN_ID: 42161,

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { WalletConnection } from './components/WalletConnection';
+import axios from 'axios';
 import { 
   ArrowRight, 
   TrendingUp, 
@@ -40,6 +41,7 @@ function Header() {
   const isHomePage = location.pathname === '/';
   const isDashboard = location.pathname === '/dashboard';
   const isStrategies = location.pathname === '/strategies';
+  const isSwap = location.pathname === '/swap';
 
   return (
     <header className="fixed top-0 w-full bg-white/95 dark:bg-[#181e29]/95 backdrop-blur-md border-b border-gray-100 dark:border-gray-800 z-50 shadow-sm">
@@ -75,6 +77,12 @@ function Header() {
                 Dashboard
               </button>
               <span className="text-emerald-600 dark:text-emerald-400 font-medium">Strategies</span>
+              <button 
+                onClick={() => navigate('/swap')}
+                className="text-gray-700 dark:text-gray-200 hover:text-[#0D1B2A] dark:hover:text-white transition-colors font-medium"
+              >
+                Swap
+              </button>
             </nav>
           )}
           {isDashboard && (
@@ -86,6 +94,29 @@ function Header() {
               >
                 Strategies
               </button>
+              <button 
+                onClick={() => navigate('/swap')}
+                className="text-gray-700 dark:text-gray-200 hover:text-[#0D1B2A] dark:hover:text-white transition-colors font-medium"
+              >
+                Swap
+              </button>
+            </nav>
+          )}
+          {isSwap && (
+            <nav className="hidden md:flex space-x-8">
+              <button 
+                onClick={() => navigate('/dashboard')}
+                className="text-gray-700 dark:text-gray-200 hover:text-[#0D1B2A] dark:hover:text-white transition-colors font-medium"
+              >
+                Dashboard
+              </button>
+              <button 
+                onClick={() => navigate('/strategies')}
+                className="text-gray-700 dark:text-gray-200 hover:text-[#0D1B2A] dark:hover:text-white transition-colors font-medium"
+              >
+                Strategies
+              </button>
+              <span className="text-emerald-600 dark:text-emerald-400 font-medium">Swap</span>
             </nav>
           )}
 
@@ -493,6 +524,8 @@ function Dashboard() {
   const [depositTxHash, setDepositTxHash] = useState('');
   const [depositStatus, setDepositStatus] = useState<'idle' | 'getting-address' | 'waiting-transfer' | 'sending' | 'confirming' | 'success' | 'error'>('idle');
   const [currentBalance, setCurrentBalance] = useState('0');
+  const [tokenBalances, setTokenBalances] = useState<any[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // USDC contract address on Arbitrum One
   const USDC_CONTRACT_ADDRESS = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
@@ -731,40 +764,211 @@ function Dashboard() {
     }
   }
 
+  // function for getting 1inch token balances
+  const get1inchBalances = async () => {
+    try {
+      if (!address) {return;}
+      
+      console.log('🔍 Fetching 1inch token balances for:', address);
+      
+      const url = `https://api.1inch.dev/balance/v1.2/42161/balances/${address}`;
+      
+      const config = {
+        headers: {
+          Authorization: "Bearer PG0QPjOuHKZ7R22Z5aPUclbNqL2Q7w6P",
+        },
+      };
+      
+      // Common Arbitrum tokens to check
+      const body = {
+        tokens: [
+          "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", // USDC
+          "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", // USDT
+          "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", // WETH
+          "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8", // USDC.e
+          "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f", // WBTC
+          "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", // DAI
+        ],
+      };
+
+      const response = await axios.post(url, body, config);
+      console.log('📊 1inch balance data:', response.data);
+      
+      // Parse and filter non-zero balances
+      const nonZeroBalances = parseNonZeroBalances(response.data);
+      console.log('💰 Non-zero token balances:', nonZeroBalances);
+      
+      setTokenBalances(nonZeroBalances);
+    } catch (error) {
+      console.error('Failed to fetch 1inch balances:', error);
+      // Set empty array on error to prevent showing stale data
+      setTokenBalances([]);
+    }
+  }
+
+  // Parse and filter non-zero balances
+  const parseNonZeroBalances = (balanceData: any): Array<{
+    token: string;
+    symbol: string;
+    name: string;
+    balance: string;
+    formattedBalance: string;
+    decimals: number;
+    usdValue?: number;
+  }> => {
+    const nonZeroBalances = [];
+    
+    if (balanceData && balanceData.balances) {
+      for (const [tokenAddress, tokenData] of Object.entries(balanceData.balances)) {
+        const data = tokenData as any;
+        
+        // Check if balance is greater than 0
+        if (data.balance && BigInt(data.balance) > 0n) {
+          const decimals = data.decimals || 18;
+          const balance = data.balance;
+          const formattedBalance = (parseFloat(balance) / Math.pow(10, decimals)).toFixed(6);
+          
+          nonZeroBalances.push({
+            token: tokenAddress,
+            symbol: data.symbol || 'Unknown',
+            name: data.name || 'Unknown Token',
+            balance: balance,
+            formattedBalance: formattedBalance,
+            decimals: decimals,
+            usdValue: data.usdValue || 0,
+          });
+        }
+      }
+    }
+    
+    return nonZeroBalances;
+  }
+
+  // Unified refresh function with loading state
+  const handleRefresh = async () => {
+    if (isRefreshing || !address) return;
+    
+    try {
+      setIsRefreshing(true);
+      console.log('🔄 Refreshing all balances...');
+      
+      await Promise.all([
+        getBalance(),
+        get1inchBalances()
+      ]);
+      
+      console.log('✅ Refresh complete');
+    } catch (error) {
+      console.error('❌ Refresh failed:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
   // Fetch current balance on mount
   useEffect(() => {
     if (address) {
       getBalance();
-      // Set up interval to fetch balance every 10 seconds
+      get1inchBalances();
+      // Set up interval to fetch balance every 30 seconds (reduced frequency for 1inch API)
       const interval = setInterval(() => {
         getBalance();
-      }, 10000); 
+        get1inchBalances();
+      }, 30000); 
       return () => clearInterval(interval); // Cleanup on unmount
     }
+    return () => {}; // Return empty cleanup function when no address
   }, [address]);
 
   return (
     <div className="min-h-screen bg-[#10141c] text-gray-100">
       <div className="max-w-7xl mx-auto px-8 sm:px-12 lg:px-16 pt-32 pb-20">
-        {/* Top Row: Balance */}
-        <div className="grid lg:grid-cols-1 gap-10 mb-16">
+        {/* Top Row: Protocol Balance and Your Arbitrum Portfolio Side by Side */}
+        <div className="grid lg:grid-cols-2 gap-10 mb-16">
+          {/* Protocol Balance - Left Side */}
           <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-10 shadow-xl border border-white/10">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
-              <div className="mb-8 lg:mb-0">
-                <div className="text-gray-400 text-sm font-medium mb-3">TOTAL BALANCE</div>
-                <div className="text-4xl font-bold text-white mb-3"> {
-                  currentBalance ? `$${parseFloat(currentBalance).toLocaleString()}` : 'Loading...'
-                  }</div>
+            <div className="mb-6">
+              <div className="text-gray-400 text-sm font-medium mb-3">PROTOCOL BALANCE</div>
+              <div className="text-4xl font-bold text-white mb-4"> {
+                currentBalance ? `$${parseFloat(currentBalance).toLocaleString()}` : 'Loading...'
+                }</div>
             </div>
             <button 
-                className="bg-gradient-to-r from-emerald-500 to-cyan-500 text-white font-semibold px-8 py-4 rounded-xl shadow-lg hover:from-emerald-600 hover:to-cyan-600 transition-all w-full lg:w-auto"
+                className="bg-gradient-to-r from-emerald-500 to-cyan-500 text-white font-semibold px-8 py-4 rounded-xl shadow-lg hover:from-emerald-600 hover:to-cyan-600 transition-all w-full"
               onClick={() => setShowDepositModal(true)}
             >
               Deposit
             </button>
           </div>
+
+          {/* Your Arbitrum Portfolio - Right Side */}
+          <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-10 shadow-xl border border-white/10">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-xl font-bold text-white mb-1">Your Arbitrum Portfolio:</h2>
+                <p className="text-gray-400 text-sm">1inch Portfolio API</p>
+              </div>
+              <button 
+                onClick={handleRefresh}
+                className="flex items-center space-x-2 px-3 py-2 rounded-lg border border-cyan-500 text-cyan-400 font-medium hover:bg-cyan-900/20 transition-all text-sm disabled:opacity-50"
+                disabled={!address || isRefreshing}
+              >
+                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+              </button>
+            </div>
+            
+            {tokenBalances.length > 0 ? (
+              <div className="space-y-3 max-h-72 overflow-y-auto">
+                {tokenBalances.map((token, index) => (
+                  <div
+                    key={index}
+                    className="bg-white/5 rounded-lg p-4 border border-white/10 hover:border-emerald-400/20 transition-all"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-8 h-8 bg-gradient-to-br from-emerald-400 to-cyan-500 rounded-full flex items-center justify-center">
+                          <span className="text-white font-bold text-xs">
+                            {token.symbol.slice(0, 2).toUpperCase()}
+                          </span>
+                        </div>
+                        <div>
+                          <div className="font-semibold text-white text-sm">{token.symbol}</div>
+                          <div className="text-xs text-gray-400">{token.name}</div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-white font-medium text-sm">{token.formattedBalance}</div>
+                        {token.usdValue > 0 && (
+                          <div className="text-emerald-400 text-xs">${token.usdValue.toFixed(2)}</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <Wallet className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                <h3 className="text-lg font-semibold text-white mb-2">No Tokens Found</h3>
+                <p className="text-gray-400 text-sm mb-4">
+                  {address ? 'No tokens with non-zero balances' : 'Connect wallet to view tokens'}
+                </p>
+                {address && (
+                  <button 
+                    onClick={handleRefresh}
+                    className="bg-gradient-to-r from-emerald-500 to-cyan-500 text-white font-semibold px-4 py-2 rounded-lg hover:from-emerald-600 hover:to-cyan-600 transition-all text-sm disabled:opacity-50"
+                    disabled={isRefreshing}
+                  >
+                    {isRefreshing ? 'Refreshing...' : 'Refresh Balances'}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
+
+
 
         {/* Stats Row */}
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8 mb-16">
@@ -1097,6 +1301,346 @@ function Strategies() {
   );
 }
 
+function Swap() {
+  const { address } = useAccount();
+  const config = useConfig();
+  const [fromToken, setFromToken] = useState('USDC');
+  const [toToken, setToToken] = useState('1INCH');
+  const [fromAmount, setFromAmount] = useState('');
+  const [toAmount, setToAmount] = useState('');
+  const [isSwapping, setIsSwapping] = useState(false);
+  const [swapQuote, setSwapQuote] = useState<any>(null);
+  const [slippage, setSlippage] = useState(1); // 1% default slippage
+  
+  // Token list with contract addresses on Arbitrum
+  const tokens = {
+    'USDC': {
+      symbol: 'USDC',
+      name: 'USD Coin',
+      address: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+      decimals: 6,
+      icon: '💵',
+      color: 'from-blue-500 to-blue-600'
+    },
+    '1INCH': {
+      symbol: '1INCH',
+      name: '1inch Token',
+      address: '0x111111111117dC0aa78b770fA6A738034120C302',
+      decimals: 18,
+      icon: '🔄',
+      color: 'from-purple-500 to-purple-600'
+    },
+    'ETH': {
+      symbol: 'ETH',
+      name: 'Ethereum',
+      address: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
+      decimals: 18,
+      icon: '⚡',
+      color: 'from-gray-600 to-gray-700'
+    },
+    'ARB': {
+      symbol: 'ARB',
+      name: 'Arbitrum',
+      address: '0x912CE59144191C1204E64559FE8253a0e49E6548',
+      decimals: 18,
+      icon: '🚀',
+      color: 'from-orange-500 to-orange-600'
+    }
+  };
+
+  // Only show these tokens in "To" dropdown (ordered with 1INCH first)
+  const toTokenOrder = ['1INCH', 'ETH', 'ARB'];
+
+  // Get swap quote from 1inch
+  const getSwapQuote = async () => {
+    if (!fromAmount || parseFloat(fromAmount) <= 0) {
+      setToAmount('');
+      setSwapQuote(null);
+      return;
+    }
+    
+    try {
+      const fromTokenData = tokens[fromToken as keyof typeof tokens];
+      const toTokenData = tokens[toToken as keyof typeof tokens];
+      
+      const amount = Math.floor(parseFloat(fromAmount) * Math.pow(10, fromTokenData.decimals));
+      
+      console.log('🔍 Getting quote for:', {
+        from: fromTokenData.symbol,
+        to: toTokenData.symbol,
+        amount: fromAmount,
+        amountWei: amount.toString(),
+        fromAddress: fromTokenData.address,
+        toAddress: toTokenData.address
+      });
+      
+      const url = `https://api.1inch.dev/swap/v5.2/42161/quote?src=${fromTokenData.address}&dst=${toTokenData.address}&amount=${amount}`;
+      
+      console.log('🌐 API URL:', url);
+      
+      const response = await axios.get(url, {
+        headers: {
+          Authorization: "Bearer PG0QPjOuHKZ7R22Z5aPUclbNqL2Q7w6P",
+        },
+      });
+      
+      console.log('📊 API Response:', response.data);
+      
+      const quote = response.data as any;
+      const formattedToAmount = (parseFloat(quote.toAmount) / Math.pow(10, toTokenData.decimals)).toFixed(6);
+      
+      console.log('💰 Formatted amount:', formattedToAmount);
+      
+      setToAmount(formattedToAmount);
+      setSwapQuote(quote);
+      
+    } catch (error) {
+      console.error('❌ Failed to get swap quote:', error);
+      if ((error as any)?.response) {
+        console.error('API Error Response:', (error as any).response.data);
+        console.error('API Error Status:', (error as any).response.status);
+      }
+      setToAmount('');
+      setSwapQuote(null);
+    }
+  };
+
+  // Execute swap
+  const executeSwap = async () => {
+    if (!swapQuote || !address) return;
+    
+    try {
+      setIsSwapping(true);
+      
+      const fromTokenData = tokens[fromToken as keyof typeof tokens];
+      const toTokenData = tokens[toToken as keyof typeof tokens];
+      const amount = parseFloat(fromAmount) * Math.pow(10, fromTokenData.decimals);
+      
+      const swapUrl = `https://api.1inch.dev/swap/v5.2/42161/swap?src=${fromTokenData.address}&dst=${toTokenData.address}&amount=${amount}&from=${address}&slippage=${slippage}&disableEstimate=true`;
+      
+      const response = await axios.get(swapUrl, {
+        headers: {
+          Authorization: "Bearer PG0QPjOuHKZ7R22Z5aPUclbNqL2Q7w6P",
+        },
+      });
+      
+      const swapData = response.data as any;
+      
+      // Execute the swap transaction
+      const txHash = await writeContract(config, {
+        address: (swapData as any).tx.to as `0x${string}`,
+        abi: [], // 1inch provides the calldata
+        functionName: 'swap', // This will be overridden by the calldata
+        args: [],
+        value: BigInt((swapData as any).tx.value || 0),
+        gas: BigInt((swapData as any).tx.gas || 300000),
+        gasPrice: BigInt((swapData as any).tx.gasPrice || 0),
+        account: address,
+        data: (swapData as any).tx.data as `0x${string}`,
+      } as any);
+      
+      console.log('✅ Swap successful! Transaction hash:', txHash);
+      
+      // Reset form
+      setFromAmount('');
+      setToAmount('');
+      setSwapQuote(null);
+      
+    } catch (error) {
+      console.error('❌ Swap failed:', error);
+    } finally {
+      setIsSwapping(false);
+    }
+  };
+
+  // Handle amount change and get quote
+  const handleFromAmountChange = (value: string) => {
+    setFromAmount(value);
+    if (value && parseFloat(value) > 0) {
+      // Debounce the quote request
+      setTimeout(() => getSwapQuote(), 500);
+    } else {
+      setToAmount('');
+      setSwapQuote(null);
+    }
+  };
+
+  // Reset amounts (since we can't swap USDC position)
+  const resetAmounts = () => {
+    setFromAmount('');
+    setToAmount('');
+    setSwapQuote(null);
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-[#0f1419] via-[#10141c] to-[#1a1f2e] text-gray-100">
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-20">
+        <div className="text-center mb-10">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-emerald-500 to-cyan-500 rounded-2xl mb-4 shadow-lg">
+            <RefreshCw className="w-8 h-8 text-white" />
+          </div>
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent mb-3">Token Swap</h1>
+          <p className="text-gray-400 text-lg">Swap tokens seamlessly with 1inch Protocol</p>
+        </div>
+
+        <div className="bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-2xl rounded-3xl p-8 shadow-2xl border border-white/20 relative overflow-hidden">
+          {/* Background decoration */}
+          <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-cyan-500/5 rounded-3xl"></div>
+          <div className="relative z-10">
+          {/* From Token - USDC Only */}
+          <div className="mb-6">
+            <label className="block text-gray-300 text-sm font-semibold mb-4 tracking-wide">From</label>
+            <div className="bg-gradient-to-br from-blue-500/15 via-blue-600/10 to-indigo-600/15 rounded-2xl p-6 border border-blue-400/30 backdrop-blur-sm shadow-lg hover:shadow-xl transition-all duration-300 group">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-4">
+                  <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform duration-300">
+                    <span className="text-white font-bold text-lg">💵</span>
+                  </div>
+                  <div>
+                    <div className="text-white text-xl font-bold">USDC</div>
+                    <div className="text-blue-300 text-sm font-medium">USD Coin</div>
+                  </div>
+                </div>
+                <div className="bg-gradient-to-r from-blue-500/30 to-indigo-500/30 px-4 py-2 rounded-xl border border-blue-400/40">
+                  <span className="text-blue-200 text-xs font-semibold tracking-wide">PRIMARY</span>
+                </div>
+              </div>
+              <input
+                type="number"
+                value={fromAmount}
+                onChange={(e) => handleFromAmountChange(e.target.value)}
+                placeholder="0.0"
+                className="w-full bg-transparent text-3xl font-bold text-white outline-none placeholder-blue-300/40 focus:placeholder-blue-300/60 transition-colors"
+              />
+            </div>
+          </div>
+
+          {/* Reset Button */}
+          <div className="flex justify-center my-8">
+            <button
+              onClick={resetAmounts}
+              className="group relative p-4 bg-gradient-to-r from-gray-600/20 to-gray-700/20 hover:from-emerald-500/20 hover:to-cyan-500/20 rounded-2xl transition-all duration-300 border border-white/20 hover:border-emerald-400/40 shadow-lg hover:shadow-xl transform hover:scale-105"
+              title="Clear amounts"
+            >
+              <RefreshCw className="w-6 h-6 text-gray-300 group-hover:text-emerald-400 group-hover:rotate-180 transition-all duration-500" />
+              <span className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 text-xs text-gray-500 group-hover:text-emerald-400 transition-colors opacity-0 group-hover:opacity-100">
+                Clear
+              </span>
+            </button>
+          </div>
+
+          {/* To Token */}
+          <div className="mb-8">
+            <label className="block text-gray-300 text-sm font-semibold mb-4 tracking-wide">To</label>
+            <div className="bg-gradient-to-br from-white/8 via-white/5 to-white/3 rounded-2xl p-6 border border-white/20 hover:border-emerald-400/40 transition-all duration-300 shadow-lg hover:shadow-xl group">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-4">
+                  <div className={`w-12 h-12 bg-gradient-to-br ${tokens[toToken as keyof typeof tokens].color} rounded-xl flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform duration-300`}>
+                    <span className="text-white font-bold text-lg">{tokens[toToken as keyof typeof tokens].icon}</span>
+                  </div>
+                  <div>
+                    <select
+                      value={toToken}
+                      onChange={(e) => setToToken(e.target.value)}
+                      className="bg-transparent text-white text-xl font-bold outline-none cursor-pointer hover:text-emerald-400 transition-colors pr-2"
+                    >
+                      {toTokenOrder.map((key) => {
+                        const token = tokens[key as keyof typeof tokens];
+                        return (
+                          <option key={key} value={key} className="bg-[#181e29] text-white">
+                            {token.icon} {token.symbol}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    <div className="text-gray-400 text-sm font-medium">{tokens[toToken as keyof typeof tokens].name}</div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs text-gray-500 mb-2 font-medium tracking-wide">YOU GET</div>
+                  <div className="text-3xl font-bold text-white">
+                    {toAmount || '0.0'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Slippage Settings */}
+          <div className="mb-8">
+            <label className="block text-gray-300 text-sm font-semibold mb-4 tracking-wide">Slippage Tolerance</label>
+            <div className="flex gap-3">
+              {[0.5, 1, 2, 3].map((value) => (
+                <button
+                  key={value}
+                  onClick={() => setSlippage(value)}
+                  className={`flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-300 border ${
+                    slippage === value
+                      ? 'bg-gradient-to-r from-emerald-500 to-emerald-600 text-white border-emerald-400 shadow-lg shadow-emerald-500/25 transform scale-105'
+                      : 'bg-white/10 text-gray-300 hover:bg-white/20 border-white/20 hover:border-white/30 hover:text-white'
+                  } hover:transform hover:scale-105`}
+                >
+                  {value}%
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Swap Quote Info */}
+          {swapQuote && (
+            <div className="mb-8 p-6 bg-gradient-to-br from-emerald-500/10 via-cyan-500/5 to-blue-500/10 rounded-2xl border border-emerald-400/30 backdrop-blur-sm shadow-lg">
+              <div className="text-sm text-emerald-300 mb-4 font-semibold tracking-wide">SWAP DETAILS</div>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-300 font-medium">Exchange Rate</span>
+                  <span className="text-white font-semibold">1 {fromToken} = {(parseFloat(toAmount) / parseFloat(fromAmount)).toFixed(6)} {toToken}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-300 font-medium">Estimated Gas</span>
+                  <span className="text-white font-semibold">{swapQuote.estimatedGas || 'N/A'}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-300 font-medium">Price Impact</span>
+                  <span className="text-emerald-400 font-semibold">{'< 0.1%'}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Swap Button */}
+          <button
+            onClick={executeSwap}
+            disabled={!address || !fromAmount || !toAmount || isSwapping}
+            className="group relative w-full bg-gradient-to-r from-emerald-500 via-emerald-600 to-cyan-500 text-white font-bold py-5 px-8 rounded-2xl hover:from-emerald-600 hover:via-emerald-700 hover:to-cyan-600 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-xl hover:shadow-2xl hover:shadow-emerald-500/25 transform hover:scale-[1.02] active:scale-[0.98] border border-emerald-400/50"
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+            <span className="relative z-10 text-lg tracking-wide">
+              {!address 
+                ? '🔗 Connect Wallet' 
+                : isSwapping 
+                  ? '⏳ Swapping...' 
+                  : !fromAmount || !toAmount 
+                    ? '💡 Enter Amount' 
+                    : `🔄 Swap ${fromToken} → ${toToken}`
+              }
+            </span>
+          </button>
+
+          {/* Powered by 1inch */}
+          <div className="text-center mt-8">
+            <div className="inline-flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-cyan-500/10 to-blue-500/10 rounded-xl border border-cyan-400/20">
+              <div className="text-xs text-gray-400 font-medium">Powered by</div>
+              <div className="text-sm font-bold text-cyan-400">1inch Protocol</div>
+              <div className="w-1 h-1 bg-cyan-400 rounded-full animate-pulse"></div>
+            </div>
+          </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Main App Layout
 function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -1113,6 +1657,7 @@ export default function App() {
       <Route path="/" element={<AppLayout><Home /></AppLayout>} />
       <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />
       <Route path="/strategies" element={<AppLayout><Strategies /></AppLayout>} />
+      <Route path="/swap" element={<AppLayout><Swap /></AppLayout>} />
     </Routes>
   );
 }

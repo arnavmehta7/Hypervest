@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { ONEINCH_CONFIG, ARBITRUM_CONFIG } from '../config/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || fetch(`${import.meta.env.VITE_API_BASE_URL}`);
 
@@ -183,6 +184,99 @@ export const strategiesAPI = {
   async stopStrategy(strategyId: string): Promise<any> {
     const response = await api.put(`/api/strategies/${strategyId}/stop`);
     return response.data;
+  }
+};
+
+// 1inch Portfolio API
+export const oneInchAPI = {
+  // Get token balances for a wallet address
+  async getTokenBalances(walletAddress: string, chainId: number = ARBITRUM_CONFIG.CHAIN_ID): Promise<any> {
+    try {
+      const url = `${ONEINCH_CONFIG.BASE_URL}${ONEINCH_CONFIG.ENDPOINTS.BALANCES(chainId, walletAddress)}`;
+      
+      const config = {
+        headers: {
+          Authorization: `Bearer ${ONEINCH_CONFIG.API_KEY}`,
+        },
+        params: {},
+        paramsSerializer: {
+          indexes: null,
+        },
+      };
+
+      // Include common token addresses for Arbitrum
+      const body = {
+        tokens: [
+          ARBITRUM_CONFIG.TOKENS.USDC,
+          ARBITRUM_CONFIG.TOKENS.USDT,
+          ARBITRUM_CONFIG.TOKENS.WETH,
+          // Add more tokens as needed
+        ],
+      };
+
+      const response = await axios.post(url, body, config);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch 1inch token balances:', error);
+      throw error;
+    }
+  },
+
+  // Get token information
+  async getTokenInfo(chainId: number = ARBITRUM_CONFIG.CHAIN_ID): Promise<any> {
+    try {
+      const url = `${ONEINCH_CONFIG.BASE_URL}${ONEINCH_CONFIG.ENDPOINTS.TOKENS(chainId)}`;
+      
+      const config = {
+        headers: {
+          Authorization: `Bearer ${ONEINCH_CONFIG.API_KEY}`,
+        },
+      };
+
+      const response = await axios.get(url, config);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch token info:', error);
+      throw error;
+    }
+  },
+
+  // Parse and filter non-zero balances
+  parseNonZeroBalances(balanceData: any): Array<{
+    token: string;
+    symbol: string;
+    name: string;
+    balance: string;
+    formattedBalance: string;
+    decimals: number;
+    usdValue?: number;
+  }> {
+    const nonZeroBalances = [];
+    
+    if (balanceData && balanceData.balances) {
+      for (const [tokenAddress, tokenData] of Object.entries(balanceData.balances)) {
+        const data = tokenData as any;
+        
+        // Check if balance is greater than 0
+        if (data.balance && BigInt(data.balance) > 0n) {
+          const decimals = data.decimals || 18;
+          const balance = data.balance;
+          const formattedBalance = (parseFloat(balance) / Math.pow(10, decimals)).toFixed(6);
+          
+          nonZeroBalances.push({
+            token: tokenAddress,
+            symbol: data.symbol || 'Unknown',
+            name: data.name || 'Unknown Token',
+            balance: balance,
+            formattedBalance: formattedBalance,
+            decimals: decimals,
+            usdValue: data.usdValue || 0,
+          });
+        }
+      }
+    }
+    
+    return nonZeroBalances;
   }
 };
 

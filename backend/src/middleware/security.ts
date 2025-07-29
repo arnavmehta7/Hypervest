@@ -45,7 +45,19 @@ export const corsOptions = {
     const allowedOrigins = [config.CORS_ORIGIN];
     
     if (config.NODE_ENV === 'development') {
-      allowedOrigins.push('http://localhost:3000', 'http://localhost:3001');
+      allowedOrigins.push(
+        'http://localhost:3000', 
+        'http://localhost:3001',
+        'http://localhost:5173', // Vite dev server
+        'http://localhost:4173', // Vite preview
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:4173'
+      );
+    }
+    
+    // Allow all origins for development (more permissive)
+    if (config.NODE_ENV === 'development') {
+      return callback(null, true);
     }
     
     if (allowedOrigins.includes(origin)) {
@@ -64,6 +76,7 @@ export const corsOptions = {
     'Content-Type',
     'Accept',
     'Authorization',
+    'Wallet', // Add Wallet header for authentication
   ],
 };
 
