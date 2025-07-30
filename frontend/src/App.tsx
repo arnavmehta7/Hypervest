@@ -511,6 +511,7 @@ function Home() {
 function Dashboard() {
   const { address } = useAccount();
   const config = useConfig();
+  const navigate = useNavigate();
   const { data: feeData } = useFeeData({
     chainId: 42161, // Arbitrum One
     formatUnits: 'gwei', // Format the units
@@ -527,6 +528,33 @@ function Dashboard() {
   const [currentBalance, setCurrentBalance] = useState('0');
   const [tokenBalances, setTokenBalances] = useState<any[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // DCA Strategy Data
+  const [dcaData, setDcaData] = useState({
+    initialInvestment: 100,
+    currentValue: 200,
+    timePeriod: '6 months',
+    token: 'ETH',
+    percentageGain: 100
+  });
+
+  // Fetch DCA performance data
+  const fetchDcaPerformance = async () => {
+    try {
+      // Simulate API call - in real app, this would fetch from your backend
+      const mockData = {
+        initialInvestment: 100,
+        currentValue: Math.floor(Math.random() * 150) + 150, // Random value between 150-300
+        timePeriod: '6 months',
+        token: 'ETH',
+        percentageGain: Math.floor(Math.random() * 80) + 50 // Random gain between 50-130%
+      };
+      
+      setDcaData(mockData);
+    } catch (error) {
+      console.error('Failed to fetch DCA performance:', error);
+    }
+  };
 
   // USDC contract address on Arbitrum One
   const USDC_CONTRACT_ADDRESS = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
@@ -1008,6 +1036,75 @@ function Dashboard() {
             <div className="text-gray-400 text-xs font-medium mb-3">Portfolio Target</div>
             <div className="text-2xl font-bold text-white mb-2">68%</div>
             <div className="text-gray-400 text-xs">32% to goal</div>
+          </div>
+        </div>
+
+        {/* Trending Strategies Block */}
+        <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-10 shadow-xl border border-white/10 mb-16">
+          <div className="flex items-center justify-center mb-8">
+            <h2 className="text-2xl font-bold text-white">Trending Strategies</h2>
+          </div>
+          
+                     <div className="flex flex-col items-center space-y-6">
+             {/* DCA Section */}
+             <div className="flex-1 w-full">
+               {/* Chart centered */}
+               <div className="flex justify-center mb-6">
+                 <div className="bg-white/10 rounded-lg p-4 border border-white/20">
+                   {/* Simple SVG Chart */}
+                   <svg width="600" height="300" viewBox="0 0 200 50" className="w-100 h-50">
+                     <defs>
+                       <linearGradient id="chartGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                         <stop offset="0%" stopColor="#10b981" stopOpacity="0.3"/>
+                         <stop offset="100%" stopColor="#10b981" stopOpacity="0.1"/>
+                       </linearGradient>
+                     </defs>
+                     {/* Chart area fill */}
+                     <path 
+                       d="M0 80 L20 70 L40 60 L60 50 L80 40 L100 30 L120 25 L140 20 L160 15 L180 10 L200 5 L200 100 L0 100 Z" 
+                       fill="url(#chartGradient)"
+                     />
+                     {/* Chart line */}
+                     <path 
+                       d="M0 80 L20 70 L40 60 L60 50 L80 40 L100 30 L120 25 L140 20 L160 15 L180 10 L200 5" 
+                       stroke="#10b981" 
+                       strokeWidth="3" 
+                       fill="none"
+                       strokeLinecap="round"
+                       strokeLinejoin="round"
+                     />
+                   </svg>
+                 </div>
+               </div>
+               
+               {/* DCA text below chart */}
+               <div className="flex justify-center mb-6">
+                 <div className="text-6xl font-bold text-emerald-400">DCA</div>
+               </div>
+              
+              <p className=" text-center text-gray-300 text-lg leading-relaxed">
+                If you invested <span className="text-emerald-400 font-semibold">${dcaData.initialInvestment} DCA</span> over past{' '}
+                <span className="text-emerald-400 font-semibold">{dcaData.timePeriod}</span> for{' '}
+                <span className="text-emerald-400 font-semibold">{dcaData.token}</span> then you would have had{' '}
+                <span className="text-emerald-400 font-semibold">${dcaData.currentValue}</span> right now
+              </p>
+            </div>
+          </div>
+          
+          {/* Bottom Section with CTA and Next Strategy */}
+          <div className="flex items-center justify-between mt-8 pt-6 border-t border-white/10">
+            <button 
+              onClick={() => navigate('/strategies')}
+              className="bg-gradient-to-r from-emerald-500 to-cyan-500 text-white font-semibold px-8 py-4 rounded-xl shadow-lg hover:from-emerald-600 hover:to-cyan-600 transition-all flex items-center space-x-2"
+            >
+              <span>View Strategies</span>
+              <ArrowRight className="w-5 h-5" />
+            </button>
+            
+            <div className="flex items-center space-x-2 text-gray-400 hover:text-white transition-colors cursor-pointer">
+              <span className="text-sm font-medium">Next Strategy</span>
+              <ArrowRight className="w-4 h-4" />
+            </div>
           </div>
         </div>
       </div>
