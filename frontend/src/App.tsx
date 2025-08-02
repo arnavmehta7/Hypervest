@@ -27,7 +27,8 @@ import {
   Calendar,
   RefreshCw,
   Check,
-  AlertCircle
+  AlertCircle,
+  ExternalLink
 } from 'lucide-react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { useAccount, useConfig, useFeeData, useEstimateGas } from 'wagmi';
@@ -807,11 +808,12 @@ function Dashboard() {
       const body = {
         tokens: [
           "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", // USDC
-          "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", // USDT
           "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", // WETH
           "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8", // USDC.e
           "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f", // WBTC
           "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", // DAI
+          "0x6314c31a7a1652ce482cffe247e9cb7c3f4bb9af", // 1INCH
+          "0x912CE59144191C1204E64559FE8253a0e49E6548", // ARB
           "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", // ETH
         ],
         walletAddress: address,
@@ -851,21 +853,23 @@ function Dashboard() {
     */
     const tokenAddressToTokenNameMap: Record<string, string> = {
       "0xaf88d065e77c8cc2239327c5edb3a432268e5831": "USDC",
-      "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9": "USDT",
+      "0x6314c31a7a1652ce482cffe247e9cb7c3f4bb9af": "1INCH",
       "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1": "WETH",
       "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8": "USDC.e",
       "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f": "WBTC",
       "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1": "DAI",
+      "0x912CE59144191C1204E64559FE8253a0e49E6548": "ARB",
       "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "ETH",
     };
 
     const tokenAddressToDecimalsMap: Record<string, number> = {
       "0xaf88d065e77c8cc2239327c5edb3a432268e5831": 6, // USDC
-      "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9": 6, // USDT
+      "0x6314c31a7a1652ce482cffe247e9cb7c3f4bb9af": 18, // 1INCH
       "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1": 18, // WETH
       "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8": 6, // USDC.e
       "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f": 8, // WBTC
       "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1": 18, // DAI
+      "0x912CE59144191C1204E64559FE8253a0e49E6548": 18, // ARB
       "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": 18, // ETH
     };
 
@@ -1275,19 +1279,570 @@ function Dashboard() {
 }
 
 function Strategies() {
+  const { address } = useAccount();
+  const [showDCAModal, setShowDCAModal] = useState(false);
+  const [strategies, setStrategies] = useState<any[]>([]);
+  const [allExecutions, setAllExecutions] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  // Notification state for DCA operations
+  const [notification, setNotification] = useState<{
+    show: boolean;
+    type: 'success' | 'error';
+    title: string;
+    message: string;
+  }>({ show: false, type: 'success', title: '', message: '' });
+  
+  // Transaction details modal state
+  const [showTransactionModal, setShowTransactionModal] = useState(false);
+  const [transactionDetails, setTransactionDetails] = useState<{
+    execution: any;
+    transactions: any[];
+  } | null>(null);
+  const [loadingTransactions, setLoadingTransactions] = useState(false);
+  
+  const [dcaForm, setDcaForm] = useState({
+    name: '',
+    fromToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', // USDC
+    toToken: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1', // WETH
+    amountPerExecution: '',
+    totalAmount: '',
+    frequency: '0 0 */7 * *', // Weekly by default
+    slippage: 1
+  });
+
+  // Available tokens for DCA
+  const tokens = {
+    '0xaf88d065e77c8cC2239327C5EDb3A432268e5831': { symbol: 'USDC', name: 'USD Coin', decimals: 6, icon: '💵' },
+    // 1inch token
+    '0x6314c31a7a1652ce482cffe247e9cb7c3f4bb9af': { symbol: '1INCH', name: '1inch', decimals: 18, icon: '🔥' },
+    '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1': { symbol: 'WETH', name: 'Wrapped Ethereum', decimals: 18, icon: '⚡' },
+    '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee': { symbol: 'ETH', name: 'Ethereum', decimals: 18, icon: '💎' },
+    '0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f': { symbol: 'WBTC', name: 'Wrapped Bitcoin', decimals: 8, icon: '₿' },
+    '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1': { symbol: 'DAI', name: 'Dai Stablecoin', decimals: 18, icon: '🟡' },
+    '0x912CE59144191C1204E64559FE8253a0e49E6548': { symbol: 'ARB', name: 'Arbitrum', decimals: 18, icon: '🚀' }
+  };
+
+  // Frequency options
+  const frequencyOptions = [
+    { value: '*/5 * * * *', label: 'Every 5 Minutes', description: 'Every 5 minutes' },
+    { value: '0 0 * * *', label: 'Daily', description: 'Every day at midnight' },
+    { value: '0 0 */3 * *', label: 'Every 3 Days', description: 'Every 3 days' },
+    { value: '0 0 */7 * *', label: 'Weekly', description: 'Every week' },
+    { value: '0 0 1,15 * *', label: 'Bi-Weekly', description: '1st and 15th of each month' },
+    { value: '0 0 1 * *', label: 'Monthly', description: 'First day of each month' }
+  ];
+
+  // Fetch user strategies
+  const fetchStrategies = async () => {
+    try {
+      if (!address) return;
+      
+      const authToken = localStorage.getItem('authToken');
+      if (!authToken) return;
+
+      console.log('📊 Fetching strategies...');
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/strategies`, {
+        headers: {
+          'Authorization': `Wallet ${authToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('📊 Strategies fetched:', data);
+        setStrategies(data.strategies || []);
+        
+        // Extract all executions from all strategies
+        const executions = (data.strategies || []).flatMap((strategy: any) => 
+          (strategy.executions || []).map((execution: any) => ({
+            ...execution,
+            strategyName: strategy.name,
+            strategyType: strategy.type,
+            strategyId: strategy.id
+          }))
+        );
+        setAllExecutions(executions);
+        console.log('📊 All executions:', executions);
+      } else {
+        console.error('❌ Failed to fetch strategies:', response.status, response.statusText);
+      }
+    } catch (error) {
+      console.error('❌ Failed to fetch strategies:', error);
+    }
+  };
+
+  // Create DCA strategy
+  const createDCAStrategy = async () => {
+    try {
+      setIsLoading(true);
+      
+      const authToken = localStorage.getItem('authToken');
+      if (!authToken) {
+        throw new Error('No auth token found');
+      }
+
+      if (!dcaForm.name || !dcaForm.amountPerExecution || !dcaForm.totalAmount) {
+        throw new Error('Please fill in all required fields');
+      }
+
+      console.log('🚀 Creating DCA strategy:', dcaForm);
+
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/strategies/dca`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Wallet ${authToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(dcaForm)
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('✅ DCA strategy created:', data);
+        
+        // Show success notification
+        showNotification(
+          'success',
+          'Strategy Created! 🎉',
+          `Successfully created "${dcaForm.name}" strategy. It will execute automatically based on your schedule.`
+        );
+        
+        // Reset form and close modal
+        setDcaForm({
+          name: '',
+          fromToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', // USDC
+          toToken: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
+          amountPerExecution: '',
+          totalAmount: '',
+          frequency: '0 0 */7 * *',
+          slippage: 1
+        });
+        setShowDCAModal(false);
+        
+        // Refresh strategies list
+        await fetchStrategies();
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create strategy');
+      }
+    } catch (error) {
+      console.error('❌ Failed to create DCA strategy:', error);
+      showNotification(
+        'error',
+        'Strategy Creation Failed ❌',
+        error instanceof Error ? error.message : 'Unknown error occurred'
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Manage strategy (pause/resume/stop)
+  const manageStrategy = async (strategyId: string, action: 'pause' | 'resume' | 'stop' | 'execute') => {
+    try {
+      const authToken = localStorage.getItem('authToken');
+      if (!authToken) return;
+
+      const endpoint = action === 'execute' 
+        ? `${import.meta.env.VITE_API_BASE_URL}/api/strategies/${strategyId}/execute`
+        : `${import.meta.env.VITE_API_BASE_URL}/api/strategies/${strategyId}/${action}`;
+
+      console.log(`🔄 ${action}ing strategy:`, strategyId);
+
+      const response = await fetch(endpoint, {
+        method: action === 'execute' ? 'POST' : 'PUT',
+        headers: {
+          'Authorization': `Wallet ${authToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log(`✅ Strategy ${action}d successfully:`, result);
+        
+        // Show success notification
+        showNotification(
+          'success',
+          `Strategy ${action.charAt(0).toUpperCase() + action.slice(1)}d! ✅`,
+          `Strategy has been ${action}d successfully.`
+        );
+        
+        await fetchStrategies(); // Refresh the list
+      } else {
+        const errorData = await response.json();
+        console.error(`❌ Failed to ${action} strategy:`, errorData);
+        throw new Error(errorData.error || `Failed to ${action} strategy`);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to ${action} strategy:`, error);
+      showNotification(
+        'error',
+        `Failed to ${action.charAt(0).toUpperCase() + action.slice(1)} Strategy ❌`,
+        error instanceof Error ? error.message : 'Unknown error occurred'
+      );
+    }
+  };
+
+  // Calculate estimated executions
+  const calculateExecutions = () => {
+    const amount = parseFloat(dcaForm.amountPerExecution);
+    const total = parseFloat(dcaForm.totalAmount);
+    if (amount && total && amount > 0) {
+      return Math.floor(total / amount);
+    }
+    return 0;
+  };
+
+  // Format token symbol for display
+  const getTokenInfo = (address: string) => {
+    return tokens[address as keyof typeof tokens] || { symbol: 'Unknown', icon: '❓' };
+  };
+
+  // Format execution status for display
+  const getStatusColor = (status: string) => {
+    switch (status.toUpperCase()) {
+      case 'COMPLETED': return 'text-emerald-400';
+      case 'FAILED': return 'text-red-400';
+      case 'EXECUTING': return 'text-blue-400';
+      case 'PENDING': return 'text-yellow-400';
+      default: return 'text-gray-400';
+    }
+  };
+
+  // Load strategies on mount
+  useEffect(() => {
+    if (address) {
+      fetchStrategies();
+    }
+  }, [address]);
+
+  // Show notification
+  const showNotification = (type: 'success' | 'error', title: string, message: string) => {
+    setNotification({ show: true, type, title, message });
+    // Auto-hide after 5 seconds
+    setTimeout(() => {
+      setNotification(prev => ({ ...prev, show: false }));
+    }, 5000);
+  };
+
+  // Fetch transaction details for an execution
+  const fetchTransactionDetails = async (executionId: string) => {
+    try {
+      setLoadingTransactions(true);
+      const authToken = localStorage.getItem('authToken');
+      if (!authToken) return;
+
+      const response = await fetch(
+        `${import.meta.env.VITE_API_BASE_URL}/api/strategies/executions/${executionId}/transactions`,
+        {
+          headers: {
+            'Authorization': `Wallet ${authToken}`,
+          },
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        setTransactionDetails(data);
+        setShowTransactionModal(true);
+      } else {
+        throw new Error('Failed to fetch transaction details');
+      }
+    } catch (error) {
+      console.error('Error fetching transaction details:', error);
+      showNotification('error', 'Error', 'Failed to fetch transaction details');
+    } finally {
+      setLoadingTransactions(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#10141c] text-gray-100">
       <div className="max-w-7xl mx-auto px-8 sm:px-12 lg:px-16 pt-32 pb-20">
+        {/* Active Strategies Section */}
+        {strategies.length > 0 && (
+          <div className="mb-16">
+            <div className="flex items-center justify-between mb-10">
+              <div>
+                <div className="text-2xl font-bold text-white mb-2">Your Active Strategies</div>
+                <div className="text-gray-400">Manage and monitor your automated strategies</div>
+              </div>
+              <button
+                onClick={() => fetchStrategies()}
+                className="flex items-center space-x-2 px-4 py-2 rounded-lg border border-cyan-500 text-cyan-400 font-medium hover:bg-cyan-900/20 transition-all"
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span>Refresh</span>
+              </button>
+            </div>
+
+            <div className="grid md:grid-cols-1 lg:grid-cols-2 gap-6 mb-12">
+              {strategies.map((strategy) => {
+                const params = strategy.parameters;
+                const fromToken = getTokenInfo(params?.fromToken);
+                const toToken = getTokenInfo(params?.toToken);
+                
+                return (
+                  <div key={strategy.id} className="bg-gradient-to-br from-emerald-900/20 to-cyan-900/20 rounded-xl p-6 border border-emerald-400/10 shadow-lg">
+                    <div className="flex items-start justify-between mb-4">
+                      <div>
+                        <div className="font-bold text-white text-lg mb-1">{strategy.name}</div>
+                        <div className="text-gray-400 text-sm">{strategy.type} Strategy</div>
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                            strategy.status === 'ACTIVE' ? 'bg-emerald-900/60 text-emerald-300' :
+                            strategy.status === 'PAUSED' ? 'bg-yellow-900/60 text-yellow-300' :
+                            'bg-red-900/60 text-red-300'
+                          }`}>
+                            {strategy.status.toLowerCase()}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs text-gray-400">Progress</div>
+                        <div className="text-emerald-400 font-semibold">
+                          ${parseFloat(strategy.totalInvested || '0').toFixed(2)} / ${parseFloat(params?.totalAmount || '0').toFixed(2)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white/5 rounded-lg p-3 mb-4">
+                      <div className="text-xs text-gray-400 mb-2">Strategy Details</div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-300">
+                          {fromToken.icon} {fromToken.symbol} → {toToken.icon} {toToken.symbol}
+                        </span>
+                        <span className="text-white">${parseFloat(params?.amountPerExecution || '0').toFixed(2)} per execution</span>
+                      </div>
+                    </div>
+
+                    {/* Recent Executions */}
+                    {strategy.executions && strategy.executions.length > 0 ? (
+                      <div className="mb-4">
+                        <div className="text-xs text-gray-400 mb-2">Recent Executions ({strategy.executions.length})</div>
+                        <div className="space-y-1 max-h-24 overflow-y-auto">
+                          {strategy.executions.slice(0, 3).map((execution: any) => (
+                            <div key={execution.id} className="flex items-center justify-between bg-white/5 rounded p-2 text-xs">
+                              <div className="flex items-center space-x-2">
+                                <div className={`font-medium ${getStatusColor(execution.status)}`}>
+                                  {execution.status}
+                                </div>
+                                {execution.status === 'COMPLETED' && (
+                                  <Check className="w-3 h-3 text-emerald-400" />
+                                )}
+                              </div>
+                              <div className="text-gray-400">
+                                {execution.executedAt ? new Date(execution.executedAt).toLocaleDateString() : 'Pending'}
+                              </div>
+                              {execution.fromAmount && (
+                                <div className="text-white">${parseFloat(execution.fromAmount).toFixed(2)}</div>
+                              )}
+                              {execution.txHash && (
+                                <div className="flex items-center space-x-1">
+                                  <a
+                                    href={`https://arbiscan.io/tx/${execution.txHash}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-cyan-400 hover:text-cyan-300 transition-colors font-mono text-xs flex items-center space-x-1"
+                                    title={`View transaction: ${execution.txHash}`}
+                                  >
+                                    <span>{execution.txHash.slice(0, 4)}...{execution.txHash.slice(-2)}</span>
+                                    <ExternalLink className="w-2 h-2" />
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mb-4 bg-gray-800/30 rounded-lg p-3">
+                        <div className="text-xs text-gray-400 mb-1">No Executions Yet</div>
+                        <div className="text-xs text-gray-500">Click "Execute Now" to test your strategy</div>
+                      </div>
+                    )}
+
+                    {/* Strategy Controls */}
+                    <div className="flex gap-2">
+                      {strategy.status === 'ACTIVE' && (
+                        <>
+                          <button
+                            onClick={() => manageStrategy(strategy.id, 'pause')}
+                            className="flex-1 bg-yellow-600/20 text-yellow-300 font-medium px-3 py-2 rounded-lg hover:bg-yellow-600/30 transition-all text-sm"
+                          >
+                            Pause
+                          </button>
+                          <button
+                            onClick={() => manageStrategy(strategy.id, 'execute')}
+                            className="flex-1 bg-emerald-600/20 text-emerald-300 font-medium px-3 py-2 rounded-lg hover:bg-emerald-600/30 transition-all text-sm"
+                          >
+                            Execute Now
+                          </button>
+                        </>
+                      )}
+                      {strategy.status === 'PAUSED' && (
+                        <button
+                          onClick={() => manageStrategy(strategy.id, 'resume')}
+                          className="flex-1 bg-emerald-600/20 text-emerald-300 font-medium px-3 py-2 rounded-lg hover:bg-emerald-600/30 transition-all text-sm"
+                        >
+                          Resume
+                        </button>
+                      )}
+                      {(strategy.status === 'ACTIVE' || strategy.status === 'PAUSED') && (
+                        <button
+                          onClick={() => manageStrategy(strategy.id, 'stop')}
+                          className="bg-red-600/20 text-red-300 font-medium px-3 py-2 rounded-lg hover:bg-red-600/30 transition-all text-sm"
+                        >
+                          Stop
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* All Executions History Section */}
+        {allExecutions.length > 0 && (
+          <div className="mb-16">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <div className="text-2xl font-bold text-white mb-2">Execution History</div>
+                <div className="text-gray-400">Complete history of all strategy executions</div>
+              </div>
+              <div className="bg-emerald-500/10 border border-emerald-400/30 rounded-lg px-4 py-2">
+                <span className="text-emerald-400 font-semibold">{allExecutions.length} Total Executions</span>
+              </div>
+            </div>
+
+            <div className="bg-white/5 backdrop-blur-xl rounded-2xl border border-white/10 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-white/5">
+                    <tr>
+                      <th className="text-left px-6 py-4 text-gray-400 font-medium text-sm">Strategy</th>
+                      <th className="text-left px-6 py-4 text-gray-400 font-medium text-sm">Pair</th>
+                      <th className="text-left px-6 py-4 text-gray-400 font-medium text-sm">Amount</th>
+                      <th className="text-left px-6 py-4 text-gray-400 font-medium text-sm">Status</th>
+                      <th className="text-left px-6 py-4 text-gray-400 font-medium text-sm">Date</th>
+                      <th className="text-left px-6 py-4 text-gray-400 font-medium text-sm">Tx Hash</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allExecutions.map((execution, index) => {
+                      const strategy = strategies.find(s => s.id === execution.strategyId);
+                      const params = strategy?.parameters;
+                      const fromToken = getTokenInfo(params?.fromToken);
+                      const toToken = getTokenInfo(params?.toToken);
+                      
+                      return (
+                        <tr key={execution.id} className={`border-t border-white/10 hover:bg-white/5 transition-colors ${index % 2 === 0 ? 'bg-white/2' : ''} ${execution.strategyType === 'DCA' && execution.status === 'COMPLETED' ? 'cursor-pointer' : ''}`}>
+                          <td className="px-6 py-4">
+                            <div className="text-white font-medium">{execution.strategyName}</div>
+                            <div className="text-gray-400 text-xs">{execution.strategyType}</div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center space-x-2 text-sm">
+                              <span>{fromToken.icon} {fromToken.symbol}</span>
+                              <ArrowRight className="w-3 h-3 text-gray-500" />
+                              <span>{toToken.icon} {toToken.symbol}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="text-white font-medium">
+                              ${execution.fromAmount ? parseFloat(execution.fromAmount).toFixed(2) : 'N/A'}
+                            </div>
+                            {execution.toAmount && (
+                              <div className="text-gray-400 text-xs">
+                                → {parseFloat(execution.toAmount).toFixed(6)} {toToken.symbol}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              execution.status === 'COMPLETED' ? 'bg-emerald-900/60 text-emerald-300' :
+                              execution.status === 'FAILED' ? 'bg-red-900/60 text-red-300' :
+                              execution.status === 'EXECUTING' ? 'bg-blue-900/60 text-blue-300' :
+                              'bg-yellow-900/60 text-yellow-300'
+                            }`}>
+                              {execution.status}
+                            </span>
+                            {execution.error && (
+                              <div className="text-red-400 text-xs mt-1 max-w-32 truncate" title={execution.error}>
+                                {execution.error}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-gray-300 text-sm">
+                            {execution.executedAt ? (
+                              <>
+                                <div>{new Date(execution.executedAt).toLocaleDateString()}</div>
+                                <div className="text-xs text-gray-500">{new Date(execution.executedAt).toLocaleTimeString()}</div>
+                              </>
+                            ) : (
+                              'Pending'
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            {execution.txHash ? (
+                              <div className="flex flex-col space-y-1">
+                                {/* Main transaction (swap) */}
+                                <a
+                                  href={`https://arbiscan.io/tx/${execution.txHash}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-cyan-400 hover:text-cyan-300 transition-colors font-mono text-sm flex items-center space-x-1"
+                                  title={`Swap Transaction: ${execution.txHash}`}
+                                >
+                                  <span>{execution.txHash.slice(0, 6)}...{execution.txHash.slice(-4)}</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                                
+                                {/* DCA Strategy executions have additional transactions */}
+                                {execution.strategyType === 'DCA' && execution.status === 'COMPLETED' && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      fetchTransactionDetails(execution.id);
+                                    }}
+                                    disabled={loadingTransactions}
+                                    className="text-xs bg-blue-500/10 text-blue-300 px-2 py-1 rounded-full hover:bg-blue-500/20 transition-colors flex items-center space-x-1"
+                                  >
+                                    <span>View All Transactions</span>
+                                    {loadingTransactions ? (
+                                      <RefreshCw className="w-2 h-2 animate-spin" />
+                                    ) : (
+                                      <ExternalLink className="w-2 h-2" />
+                                    )}
+                                  </button>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-gray-500 text-sm">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Investment Strategies */}
         <div className="mb-16">
           <div className="flex items-center justify-between mb-10">
             <div>
-              <div className="text-2xl font-bold text-white mb-2">Investment Strategies</div>
+              <div className="text-2xl font-bold text-white mb-2">Explore Investment Strategies</div>
               <div className="text-gray-400">Automate your crypto investments with proven strategies</div>
             </div>
-            <button className="px-6 py-3 rounded-lg border border-cyan-500 text-cyan-400 font-semibold hover:bg-cyan-900/20 transition-all">
-              View All
-            </button>
           </div>
           <div className="grid md:grid-cols-2 gap-8">
             {/* DCA Card */}
@@ -1298,7 +1853,6 @@ function Strategies() {
                 <div>
                     <div className="font-semibold text-white text-lg">Dollar Cost Averaging</div>
                     <div className="flex gap-2 mt-2">
-                      <span className="bg-emerald-500/80 text-white text-xs px-3 py-1 rounded-full font-medium">active</span>
                       <span className="bg-emerald-900/60 text-emerald-300 text-xs px-3 py-1 rounded-full font-medium">low risk</span>
                     </div>
                   </div>
@@ -1309,8 +1863,11 @@ function Strategies() {
                 </div>
               </div>
               <div className="text-gray-300 text-sm mb-6">Invest a fixed amount regularly to reduce volatility impact. Perfect for long-term wealth building.</div>
-              <button className="bg-white/10 text-emerald-300 font-medium px-6 py-3 rounded-lg hover:bg-emerald-900/30 transition-all">
-                Configure
+              <button 
+                onClick={() => setShowDCAModal(true)}
+                className="bg-emerald-500 text-white font-medium px-6 py-3 rounded-lg hover:bg-emerald-600 transition-all"
+              >
+                Configure DCA
               </button>
             </div>
             
@@ -1322,7 +1879,6 @@ function Strategies() {
                 <div>
                     <div className="font-semibold text-white text-lg">TWAP Strategy</div>
                     <div className="flex gap-2 mt-2">
-                      <span className="bg-emerald-500/80 text-white text-xs px-3 py-1 rounded-full font-medium">active</span>
                       <span className="bg-yellow-900/60 text-yellow-300 text-xs px-3 py-1 rounded-full font-medium">medium risk</span>
                     </div>
                   </div>
@@ -1333,8 +1889,11 @@ function Strategies() {
                 </div>
               </div>
               <div className="text-gray-300 text-sm mb-6">Time-Weighted Average Price execution for large orders. Minimize market impact with smart timing.</div>
-              <button className="bg-white/10 text-cyan-300 font-medium px-6 py-3 rounded-lg hover:bg-cyan-900/30 transition-all">
-                Configure
+              <button
+              onClick={() => setShowDCAModal(true)}
+                className="bg-emerald-500 text-white font-medium px-6 py-3 rounded-lg hover:bg-emerald-600 transition-all"
+              >
+                Configure TWAP
               </button>
             </div>
             
@@ -1347,7 +1906,7 @@ function Strategies() {
                     <div className="font-semibold text-white text-lg">Buy the Dip</div>
                     <div className="flex gap-2 mt-2">
                       <span className="bg-gray-700/80 text-gray-300 text-xs px-3 py-1 rounded-full font-medium">inactive</span>
-                      <span className="bg-yellow-900/60 text-yellow-300 text-xs px-3 py-1 rounded-full font-medium">medium risk</span>
+                      <span className="bg-yellow-900/60 text-yellow-300 text-xs px-3 py-1 rounded-full font-medium">coming soon</span>
                     </div>
                   </div>
                 </div>
@@ -1357,8 +1916,8 @@ function Strategies() {
                 </div>
               </div>
               <div className="text-gray-300 text-sm mb-6">Automatically purchase when prices drop below key support levels. Smart dip detection using technical indicators.</div>
-              <button className="bg-emerald-500 text-white font-medium px-6 py-3 rounded-lg hover:bg-emerald-600 transition-all">
-                Activate Strategy
+              <button className="bg-white/10 text-gray-300 font-medium px-6 py-3 rounded-lg hover:bg-gray-700/30 transition-all cursor-not-allowed">
+                Coming Soon
               </button>
             </div>
             
@@ -1371,7 +1930,7 @@ function Strategies() {
                     <div className="font-semibold text-white text-lg">Mean Reversion</div>
                     <div className="flex gap-2 mt-2">
                       <span className="bg-cyan-500/80 text-white text-xs px-3 py-1 rounded-full font-medium">new</span>
-                      <span className="bg-red-900/60 text-red-300 text-xs px-3 py-1 rounded-full font-medium">high risk</span>
+                      <span className="bg-red-900/60 text-red-300 text-xs px-3 py-1 rounded-full font-medium">coming soon</span>
                     </div>
                   </div>
                 </div>
@@ -1381,37 +1940,338 @@ function Strategies() {
                 </div>
               </div>
               <div className="text-gray-300 text-sm mb-6">Profit from price corrections by buying oversold and selling overbought conditions.</div>
-              <button className="bg-emerald-500 text-white font-medium px-6 py-3 rounded-lg hover:bg-emerald-600 transition-all">
-                Activate Strategy
+              <button className="bg-white/10 text-cyan-300 font-medium px-6 py-3 rounded-lg hover:bg-cyan-900/30 transition-all cursor-not-allowed">
+                Coming Soon
               </button>
             </div>
           </div>
         </div>
 
-        {/* Market Insights */}
-        <div>
-          <div className="text-2xl font-bold text-white mb-8">Market Insights</div>
-          <div className="grid md:grid-cols-2 gap-8">
-            <div className="bg-white/5 rounded-xl p-8 border border-white/10">
-              <div className="font-semibold text-emerald-400 mb-3">DCA Opportunity</div>
-              <div className="text-gray-300 mb-3">Bitcoin is down 3.2% this week</div>
-              <div className="text-gray-400 text-sm mb-6">Perfect time to increase your DCA amount for better averaging price.</div>
-              <button className="bg-emerald-500 text-white font-medium px-6 py-3 rounded-lg hover:bg-emerald-600 transition-all">
-                Adjust DCA
-              </button>
-            </div>
-            <div className="bg-white/5 rounded-xl p-8 border border-white/10">
-              <div className="font-semibold text-cyan-400 mb-3">Portfolio Health</div>
-              <div className="text-gray-300 mb-3">All strategies performing well</div>
-              <div className="text-gray-400 text-sm mb-6">Your automated strategies are on track to meet yearly targets.</div>
-              <button className="bg-cyan-500 text-white font-medium px-6 py-3 rounded-lg hover:bg-cyan-600 transition-all">
-                View Details
-              </button>
+        {/* DCA Configuration Modal */}
+        {showDCAModal && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-[#181e29] rounded-2xl p-8 shadow-2xl border border-cyan-400/20 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between mb-8">
+                <h2 className="text-2xl font-bold text-white">Configure DCA Strategy</h2>
+                <button 
+                  onClick={() => setShowDCAModal(false)}
+                  className="text-gray-400 hover:text-white transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+              
+              <div className="space-y-6">
+                {/* Strategy Name */}
+                <div>
+                  <label className="block text-gray-400 text-sm mb-3 font-medium">Strategy Name</label>
+                  <input
+                    type="text"
+                    value={dcaForm.name}
+                    onChange={(e) => setDcaForm({...dcaForm, name: e.target.value})}
+                    placeholder="e.g., Weekly ETH DCA"
+                    className="w-full bg-white/5 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                  />
+                </div>
+
+                {/* Token Selection */}
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-gray-400 text-sm mb-3 font-medium">From Token (Sell)</label>
+                    <select
+                      value={dcaForm.fromToken}
+                      onChange={(e) => setDcaForm({...dcaForm, fromToken: e.target.value})}
+                      className="w-full bg-white/5 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      {Object.entries(tokens).map(([address, token]) => (
+                        <option key={address} value={address} className="bg-[#181e29]">
+                          {token.icon} {token.symbol} - {token.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-gray-400 text-sm mb-3 font-medium">To Token (Buy)</label>
+                    <select
+                      value={dcaForm.toToken}
+                      onChange={(e) => setDcaForm({...dcaForm, toToken: e.target.value})}
+                      className="w-full bg-white/5 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      {Object.entries(tokens).filter(([address]) => address !== dcaForm.fromToken).map(([address, token]) => (
+                        <option key={address} value={address} className="bg-[#181e29]">
+                          {token.icon} {token.symbol} - {token.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Amount Configuration */}
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-gray-400 text-sm mb-3 font-medium">Amount Per Execution</label>
+                    <input
+                      type="number"
+                      value={dcaForm.amountPerExecution}
+                      onChange={(e) => setDcaForm({...dcaForm, amountPerExecution: e.target.value})}
+                      placeholder="100"
+                      step="0.01"
+                      min="0"
+                      className="w-full bg-white/5 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-gray-400 text-sm mb-3 font-medium">Total Amount</label>
+                    <input
+                      type="number"
+                      value={dcaForm.totalAmount}
+                      onChange={(e) => setDcaForm({...dcaForm, totalAmount: e.target.value})}
+                      placeholder="1000"
+                      step="0.01"
+                      min="0"
+                      className="w-full bg-white/5 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Frequency Selection */}
+                <div>
+                  <label className="block text-gray-400 text-sm mb-3 font-medium">Execution Frequency</label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {frequencyOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        onClick={() => setDcaForm({...dcaForm, frequency: option.value})}
+                        className={`p-4 rounded-lg border text-left transition-all ${
+                          dcaForm.frequency === option.value
+                            ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
+                            : 'bg-white/5 border-gray-700 text-gray-300 hover:border-gray-600'
+                        }`}
+                      >
+                        <div className="font-medium">{option.label}</div>
+                        <div className="text-xs text-gray-400 mt-1">{option.description}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Slippage Setting */}
+                <div>
+                  <label className="block text-gray-400 text-sm mb-3 font-medium">Slippage Tolerance (%)</label>
+                  <div className="flex gap-3">
+                    {[0.5, 1, 2, 3].map((value) => (
+                      <button
+                        key={value}
+                        onClick={() => setDcaForm({...dcaForm, slippage: value})}
+                        className={`flex-1 px-4 py-3 rounded-lg text-sm font-semibold transition-all ${
+                          dcaForm.slippage === value
+                            ? 'bg-emerald-500 text-white'
+                            : 'bg-white/10 text-gray-300 hover:bg-white/20'
+                        }`}
+                      >
+                        {value}%
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Summary */}
+                {dcaForm.amountPerExecution && dcaForm.totalAmount && (
+                  <div className="bg-emerald-500/10 border border-emerald-400/30 rounded-lg p-4">
+                    <div className="text-emerald-400 font-semibold mb-2">Strategy Summary</div>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Estimated Executions:</span>
+                        <span className="text-white font-medium">{calculateExecutions()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Total Investment:</span>
+                        <span className="text-white font-medium">${parseFloat(dcaForm.totalAmount || '0').toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Per Execution:</span>
+                        <span className="text-white font-medium">${parseFloat(dcaForm.amountPerExecution || '0').toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              <div className="flex gap-4 pt-6 mt-6 border-t border-gray-700">
+                <button
+                  onClick={() => setShowDCAModal(false)}
+                  className="flex-1 px-6 py-4 border border-gray-700 text-gray-300 rounded-lg hover:bg-gray-800 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={createDCAStrategy}
+                  disabled={isLoading || !dcaForm.name || !dcaForm.amountPerExecution || !dcaForm.totalAmount}
+                  className="flex-1 bg-gradient-to-r from-emerald-500 to-cyan-500 text-white font-semibold px-6 py-4 rounded-lg hover:from-emerald-600 hover:to-cyan-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isLoading ? 'Creating...' : 'Create DCA Strategy'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        )}
+
+        {/* Notification Toast */}
+        {notification.show && (
+          <div className="fixed top-4 right-4 z-50 max-w-sm w-full">
+            <div className={`rounded-lg p-4 shadow-2xl border backdrop-blur-sm ${
+              notification.type === 'success' 
+                ? 'bg-emerald-500/10 border-emerald-400/30 text-emerald-300' 
+                : 'bg-red-500/10 border-red-400/30 text-red-300'
+            }`}>
+              <div className="flex items-start space-x-3">
+                <div className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center ${
+                  notification.type === 'success' ? 'bg-emerald-500' : 'bg-red-500'
+                }`}>
+                  {notification.type === 'success' ? (
+                    <Check className="w-4 h-4 text-white" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-white" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-white text-sm mb-1">
+                    {notification.title}
+                  </div>
+                  <div className="text-sm opacity-90">
+                    {notification.message}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setNotification(prev => ({ ...prev, show: false }))}
+                  className="flex-shrink-0 text-gray-400 hover:text-white transition-colors"
+                >
+                  <span className="sr-only">Close</span>
+                  ✕
+                </button>
+              </div>
             </div>
+          </div>
+        )}
+
+        {/* Transaction Details Modal */}
+        {showTransactionModal && transactionDetails && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-[#181e29] rounded-2xl p-8 shadow-2xl border border-cyan-400/20 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-2xl font-bold text-white mb-2">Transaction Details</h2>
+                  <p className="text-gray-300 text-sm">
+                    {transactionDetails.execution.strategyName} • {transactionDetails.execution.strategyType}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowTransactionModal(false)}
+                  className="text-gray-400 hover:text-white transition-colors p-2"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Execution Info */}
+              <div className="bg-gray-800/30 rounded-lg p-4 mb-6">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <div className="text-gray-400">Status</div>
+                    <div className={`font-medium ${getStatusColor(transactionDetails.execution.status)}`}>
+                      {transactionDetails.execution.status}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-gray-400">Executed At</div>
+                    <div className="text-white">
+                      {new Date(transactionDetails.execution.executedAt).toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Transactions List */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-white mb-4">
+                  Related Transactions ({transactionDetails.transactions.length})
+                </h3>
+                
+                {transactionDetails.transactions.map((tx, index) => (
+                  <div key={tx.id || index} className="bg-white/5 rounded-lg p-4 border border-white/10">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center space-x-3">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-semibold ${
+                          tx.type === 'SWAP' ? 'bg-purple-500' : 'bg-blue-500'
+                        }`}>
+                          {index + 1}
+                        </div>
+                        <div>
+                          <div className="text-white font-medium">{tx.type}</div>
+                          <div className="text-gray-400 text-xs">
+                            {new Date(tx.timestamp).toLocaleTimeString()}
+                          </div>
+                        </div>
+                      </div>
+                      <a
+                        href={tx.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="bg-cyan-500/20 text-cyan-300 px-3 py-1 rounded-lg hover:bg-cyan-500/30 transition-colors flex items-center space-x-2 text-sm"
+                      >
+                        <span>View on Arbiscan</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+
+                    {/* Transaction Hash */}
+                    <div className="mb-3">
+                      <div className="text-xs text-gray-400 mb-1">Transaction Hash</div>
+                      <div className="bg-black/30 rounded-lg p-3 font-mono text-xs text-gray-200 break-all">
+                        {tx.txHash}
+                      </div>
+                    </div>
+
+                    {/* Token Info */}
+                    {tx.fromToken && (
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <div className="text-xs text-gray-400 mb-1">From</div>
+                          <div className="text-white">
+                            {tx.fromAmount ? parseFloat(tx.fromAmount).toFixed(6) : 'N/A'}
+                          </div>
+                          <div className="text-gray-400 text-xs break-all">{tx.fromToken}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-400 mb-1">To</div>
+                          <div className="text-white">
+                            {tx.toAmount ? parseFloat(tx.toAmount).toFixed(6) : 'N/A'}
+                          </div>
+                          <div className="text-gray-400 text-xs break-all">{tx.toToken}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Close Button */}
+              <div className="flex justify-end mt-6">
+                <button
+                  onClick={() => setShowTransactionModal(false)}
+                  className="px-6 py-3 border border-gray-700 text-gray-300 rounded-lg hover:bg-gray-800 transition-all font-medium"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
   );
 }
 
@@ -1426,6 +2286,17 @@ function Swap() {
   const [swapQuote, setSwapQuote] = useState<any>(null);
   const [slippage, setSlippage] = useState(1); // 1% default slippage
   
+  // Transaction result modal state
+  const [showResultModal, setShowResultModal] = useState(false);
+  const [transactionResult, setTransactionResult] = useState<{
+    success: boolean;
+    title: string;
+    message: string;
+    txHash?: string;
+    txUrl?: string;
+    details?: any;
+  } | null>(null);
+  
   // Token list with contract addresses on Arbitrum
   const tokens = {
     'USDC': {
@@ -1439,7 +2310,7 @@ function Swap() {
     '1INCH': {
       symbol: '1INCH',
       name: '1inch Token',
-      address: '0x111111111117dC0aa78b770fA6A738034120C302',
+      address: '0x6314c31a7a1652ce482cffe247e9cb7c3f4bb9af',
       decimals: 18,
       icon: '🔄',
       color: 'from-purple-500 to-purple-600'
@@ -1463,9 +2334,22 @@ function Swap() {
   };
 
   // Only show these tokens in "To" dropdown (ordered with 1INCH first)
-  const toTokenOrder = ['1INCH', 'ETH', 'ARB'];
+  const toTokenOrder = ['ETH', '1INCH', 'ARB'];
 
-  // Get swap quote from 1inch
+  // Show transaction result modal
+  const showTransactionResult = (result: {
+    success: boolean;
+    title: string;
+    message: string;
+    txHash?: string;
+    txUrl?: string;
+    details?: any;
+  }) => {
+    setTransactionResult(result);
+    setShowResultModal(true);
+  };
+
+  // Get swap quote from backend (via 1inch)
   const getSwapQuote = async () => {
     if (!fromAmount || parseFloat(fromAmount) <= 0) {
       setToAmount('');
@@ -1488,20 +2372,32 @@ function Swap() {
         toAddress: toTokenData.address
       });
       
-      const url = `https://api.1inch.dev/swap/v5.2/42161/quote?src=${fromTokenData.address}&dst=${toTokenData.address}&amount=${amount}`;
+      const authToken = localStorage.getItem('authToken');
+      if (!authToken) {
+        console.warn('No auth token found');
+        return;
+      }
+
+      const url = `${import.meta.env.VITE_API_BASE_URL}/api/market/quote?src=${fromTokenData.address}&dst=${toTokenData.address}&amount=${amount}&slippage=${slippage}`;
       
       console.log('🌐 API URL:', url);
       
-      const response = await axios.get(url, {
+      const response = await fetch(url, {
         headers: {
-          Authorization: `${import.meta.env.VITE_1INCH_API_KEY}`,
-        },
+          'Authorization': `Wallet ${authToken}`,
+          'Content-Type': 'application/json'
+        }
       });
       
-      console.log('📊 API Response:', response.data);
+      if (!response.ok) {
+        throw new Error(`Quote request failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('📊 Quote Response:', data);
       
-      const quote = response.data as any;
-      const formattedToAmount = (parseFloat(quote.toAmount) / Math.pow(10, toTokenData.decimals)).toFixed(6);
+      const quote = data.quote;
+      const formattedToAmount = (parseFloat(quote.dstAmount) / Math.pow(10, toTokenData.decimals)).toFixed(6);
       
       console.log('💰 Formatted amount:', formattedToAmount);
       
@@ -1510,58 +2406,89 @@ function Swap() {
       
     } catch (error) {
       console.error('❌ Failed to get swap quote:', error);
-      if ((error as any)?.response) {
-        console.error('API Error Response:', (error as any).response.data);
-        console.error('API Error Status:', (error as any).response.status);
-      }
       setToAmount('');
       setSwapQuote(null);
     }
   };
 
-  // Execute swap
+  // Execute swap via backend
   const executeSwap = async () => {
-    if (!swapQuote || !address) return;
+    if (!address) return;
     
     try {
       setIsSwapping(true);
       
+      const authToken = localStorage.getItem('authToken');
+      if (!authToken) {
+        throw new Error('No auth token found. Please connect your wallet.');
+      }
+
+      // Get quote first if we don't have one
+      if (!swapQuote && fromAmount && parseFloat(fromAmount) > 0) {
+        console.log('📊 Getting quote before swap...');
+        await getSwapQuote();
+        // Wait a moment for quote to be processed
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
       const fromTokenData = tokens[fromToken as keyof typeof tokens];
       const toTokenData = tokens[toToken as keyof typeof tokens];
-      const amount = parseFloat(fromAmount) * Math.pow(10, fromTokenData.decimals);
       
-      const swapUrl = `https://api.1inch.dev/swap/v5.2/42161/swap?src=${fromTokenData.address}&dst=${toTokenData.address}&amount=${amount}&from=${address}&slippage=${slippage}&disableEstimate=true`;
-      
-      const response = await axios.get(swapUrl, {
-        headers: {
-          Authorization: `${import.meta.env.VITE_1INCH_API_KEY}`,
-        },
+      console.log('🔄 Executing swap via backend:', {
+        fromToken: fromTokenData.address,
+        toToken: toTokenData.address,
+        amount: fromAmount,
+        slippage
       });
-      
-      const swapData = response.data as any;
-      
-      // Execute the swap transaction
-      const txHash = await writeContract(config, {
-        address: (swapData as any).tx.to as `0x${string}`,
-        abi: [], // 1inch provides the calldata
-        functionName: 'swap', // This will be overridden by the calldata
-        args: [],
-        value: BigInt((swapData as any).tx.value || 0),
-        gas: BigInt((swapData as any).tx.gas || 300000),
-        gasPrice: BigInt((swapData as any).tx.gasPrice || 0),
-        account: address,
-        data: (swapData as any).tx.data as `0x${string}`,
-      } as any);
-      
-      console.log('✅ Swap successful! Transaction hash:', txHash);
-      
-      // Reset form
-      setFromAmount('');
-      setToAmount('');
-      setSwapQuote(null);
+
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/wallet/swap`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Wallet ${authToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          fromToken: fromTokenData.address,
+          toToken: toTokenData.address,
+          amount: fromAmount,
+          slippage: slippage
+        })
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        console.log('✅ Swap successful!', result);
+        
+        // Show success modal instead of alert
+        showTransactionResult({
+          success: true,
+          title: 'Swap Successful! 🎉',
+          message: `Successfully swapped ${fromAmount} ${fromTokenData.symbol} for ${toAmount || 'estimated'} ${toTokenData.symbol}`,
+          txHash: result.transaction.txHash,
+          txUrl: result.transaction.txUrl,
+          details: result.transaction
+        });
+        
+        // Reset form
+        setFromAmount('');
+        setToAmount('');
+        setSwapQuote(null);
+        
+      } else {
+        throw new Error(result.error || result.details || 'Swap failed');
+      }
       
     } catch (error) {
       console.error('❌ Swap failed:', error);
+      
+      // Show error modal instead of alert
+      showTransactionResult({
+        success: false,
+        title: 'Swap Failed ❌',
+        message: error instanceof Error ? error.message : 'Unknown error occurred',
+        details: error
+      });
     } finally {
       setIsSwapping(false);
     }
@@ -1570,14 +2497,29 @@ function Swap() {
   // Handle amount change and get quote
   const handleFromAmountChange = (value: string) => {
     setFromAmount(value);
+    // Clear previous quote when amount changes
+    setToAmount('');
+    setSwapQuote(null);
+    
     if (value && parseFloat(value) > 0) {
       // Debounce the quote request
-      setTimeout(() => getSwapQuote(), 500);
+      const timeoutId = setTimeout(() => getSwapQuote(), 800);
+      // Note: In a real app, you'd want to store and clear this timeout properly
+    }
+  };
+
+  // Auto-fetch quote when dependencies change
+  useEffect(() => {
+    if (fromAmount && parseFloat(fromAmount) > 0) {
+      const timeoutId = setTimeout(() => {
+        getSwapQuote();
+      }, 800);
+      return () => clearTimeout(timeoutId);
     } else {
       setToAmount('');
       setSwapQuote(null);
     }
-  };
+  }, [fromToken, toToken, slippage]); // Re-fetch when these change
 
   // Reset amounts (since we can't swap USDC position)
   const resetAmounts = () => {
@@ -1655,7 +2597,12 @@ function Swap() {
                   <div>
                     <select
                       value={toToken}
-                      onChange={(e) => setToToken(e.target.value)}
+                      onChange={(e) => {
+                        setToToken(e.target.value);
+                        // Clear amounts when token changes
+                        setToAmount('');
+                        setSwapQuote(null);
+                      }}
                       className="bg-transparent text-white text-xl font-bold outline-none cursor-pointer hover:text-emerald-400 transition-colors pr-2"
                     >
                       {toTokenOrder.map((key) => {
@@ -1724,7 +2671,7 @@ function Swap() {
           {/* Swap Button */}
           <button
             onClick={executeSwap}
-            disabled={!address || !fromAmount || !toAmount || isSwapping}
+            disabled={!address || !fromAmount || parseFloat(fromAmount) <= 0 || isSwapping}
             className="group relative w-full bg-gradient-to-r from-emerald-500 via-emerald-600 to-cyan-500 text-white font-bold py-5 px-8 rounded-2xl hover:from-emerald-600 hover:via-emerald-700 hover:to-cyan-600 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-xl hover:shadow-2xl hover:shadow-emerald-500/25 transform hover:scale-[1.02] active:scale-[0.98] border border-emerald-400/50"
           >
             <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
@@ -1733,9 +2680,9 @@ function Swap() {
                 ? '🔗 Connect Wallet' 
                 : isSwapping 
                   ? '⏳ Swapping...' 
-                  : !fromAmount || !toAmount 
+                  : !fromAmount || parseFloat(fromAmount) <= 0
                     ? '💡 Enter Amount' 
-                    : `🔄 Swap ${fromToken} → ${toToken}`
+                    : `🔄 Swap ${tokens[fromToken as keyof typeof tokens].symbol} → ${tokens[toToken as keyof typeof tokens].symbol}`
               }
             </span>
           </button>
@@ -1750,6 +2697,111 @@ function Swap() {
           </div>
           </div>
         </div>
+
+        {/* Transaction Result Modal */}
+        {showResultModal && transactionResult && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-[#181e29] rounded-2xl p-8 shadow-2xl border border-cyan-400/20 max-w-md w-full mx-4">
+              <div className="text-center mb-6">
+                <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center ${
+                  transactionResult.success 
+                    ? 'bg-emerald-500/20 text-emerald-400' 
+                    : 'bg-red-500/20 text-red-400'
+                }`}>
+                  {transactionResult.success ? (
+                    <Check className="w-8 h-8" />
+                  ) : (
+                    <AlertCircle className="w-8 h-8" />
+                  )}
+                </div>
+                <h2 className="text-2xl font-bold text-white mb-2">
+                  {transactionResult.title}
+                </h2>
+                <p className="text-gray-300 text-sm leading-relaxed">
+                  {transactionResult.message}
+                </p>
+              </div>
+
+              {/* Transaction Details */}
+              {transactionResult.success && transactionResult.txHash && (
+                <div className="bg-emerald-500/10 border border-emerald-400/30 rounded-lg p-4 mb-6">
+                  <div className="text-emerald-400 font-semibold mb-3 text-sm">Transaction Details</div>
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-xs text-gray-400 mb-1">Transaction Hash</div>
+                      <div className="bg-black/30 rounded-lg p-3 break-all font-mono text-xs text-gray-200">
+                        {transactionResult.txHash}
+                      </div>
+                    </div>
+                    {transactionResult.details && (
+                      <>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-400">From:</span>
+                          <span className="text-white font-medium">{transactionResult.details.fromSymbol}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-400">To:</span>
+                          <span className="text-white font-medium">{transactionResult.details.toSymbol}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-400">Amount:</span>
+                          <span className="text-white font-medium">{transactionResult.details.fromAmount}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-400">Status:</span>
+                          <span className="text-emerald-400 font-semibold">{transactionResult.details.status}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Error Details */}
+              {!transactionResult.success && (
+                <div className="bg-red-500/10 border border-red-400/30 rounded-lg p-4 mb-6">
+                  <div className="text-red-400 font-semibold mb-2 text-sm">Error Details</div>
+                  <div className="text-gray-300 text-sm">
+                    Please try again or contact support if the problem persists.
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowResultModal(false)}
+                  className="flex-1 px-6 py-3 border border-gray-700 text-gray-300 rounded-lg hover:bg-gray-800 transition-all font-medium"
+                >
+                  Close
+                </button>
+                
+                {transactionResult.success && transactionResult.txUrl && (
+                  <button
+                    onClick={() => window.open(transactionResult.txUrl, '_blank')}
+                    className="flex-1 bg-gradient-to-r from-emerald-500 to-cyan-500 text-white font-semibold px-6 py-3 rounded-lg hover:from-emerald-600 hover:to-cyan-600 transition-all flex items-center justify-center space-x-2"
+                  >
+                    <Globe className="w-4 h-4" />
+                    <span>View on Arbiscan</span>
+                  </button>
+                )}
+
+                {!transactionResult.success && (
+                  <button
+                    onClick={() => {
+                      setShowResultModal(false);
+                      // Retry the swap
+                      executeSwap();
+                    }}
+                    className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 text-white font-semibold px-6 py-3 rounded-lg hover:from-orange-600 hover:to-red-600 transition-all"
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
