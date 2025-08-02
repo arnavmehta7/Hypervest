@@ -6,6 +6,7 @@ import { OneInchService } from '../services/oneinch';
 import { logger } from '../utils/logger';
 import { config } from '../config/env';
 import axios from 'axios';
+import { ethers } from 'ethers';
 
 const router: express.Router = express.Router();
 const oneInchService = new OneInchService();
@@ -155,22 +156,124 @@ router.get('/gas-price', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// Token price endpoint (placeholder - integrate with price feed)
+// Token price endpoint using 1inch Price API
 router.get('/price/:tokenAddress', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { tokenAddress } = req.params;
     
-    // This is a placeholder - integrate with Coingecko, CoinMarketCap, or chain price feeds
-    return res.json({
-      tokenAddress,
-      price: '0.00', // USD price
-      change24h: '0.00',
-      lastUpdated: new Date().toISOString(),
-      note: 'Price feed integration pending',
+    // Call 1inch Price API for single token
+    const url = `https://api.1inch.dev/price/v1.1/${config.CHAIN_ID}`;
+    
+    const payload = {
+      tokens: [tokenAddress]
+    };
+
+    const response = await axios.post(url, payload, {
+      headers: {
+        'Authorization': `Bearer ${config.ONEINCH_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
     });
+
+    if (response.status === 200) {
+      const prices = response.data as Record<string, number>;
+      const price = prices[tokenAddress];
+      
+      if (price !== undefined) {
+        return res.json({
+          tokenAddress,
+          price: price.toString(),
+          currency: 'USD',
+          lastUpdated: new Date().toISOString(),
+          source: '1inch',
+        });
+      } else {
+        return res.status(404).json({ 
+          error: 'Price not found for this token',
+          tokenAddress 
+        });
+      }
+    } else {
+      throw new Error(`API returned status ${response.status}`);
+    }
   } catch (error) {
-    logger.error('Error fetching token price:', error);
-    return res.status(500).json({ error: 'Failed to fetch token price' });
+    logger.error('Error fetching token price from 1inch:', error);
+    return res.status(500).json({ 
+      error: 'Failed to fetch token price',
+      tokenAddress: req.params.tokenAddress,
+      fallback: true
+    });
+  }
+});
+
+// Batch token prices endpoint
+router.post('/prices', [
+  query('tokens')
+    .isArray({ min: 1, max: 100 })
+    .withMessage('Tokens array required (1-100 tokens)'),
+], async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        error: 'Validation failed', 
+        details: errors.array() 
+      });
+    }
+
+    const { tokens } = req.body;
+
+    // Validate token addresses
+    const invalidTokens = tokens.filter((token: string) => !ethers.isAddress(token));
+    if (invalidTokens.length > 0) {
+      return res.status(400).json({
+        error: 'Invalid token addresses',
+        invalidTokens
+      });
+    }
+
+    // Call 1inch Price API for batch tokens
+    const url = `https://api.1inch.dev/price/v1.1/${config.CHAIN_ID}`;
+    
+    const payload = {
+      tokens: tokens,
+      "currency": "USD"
+    };
+
+    const response = await axios.post(url, payload, {
+      headers: {
+        'Authorization': `Bearer ${config.ONEINCH_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (response.status === 200) {
+      const prices = response.data as Record<string, number>;
+      
+      // Format response with additional metadata
+      const formattedPrices = Object.entries(prices).map(([tokenAddress, price]) => ({
+        tokenAddress,
+        price: (price as number).toString(),
+        currency: 'USD',
+      }));
+
+      return res.json({
+        prices: formattedPrices,
+        totalTokens: formattedPrices.length,
+        requestedTokens: tokens.length,
+        lastUpdated: new Date().toISOString(),
+        source: '1inch',
+        chainId: config.CHAIN_ID,
+      });
+    } else {
+      throw new Error(`API returned status ${response.status}`);
+    }
+  } catch (error) {
+    logger.error('Error fetching batch token prices from 1inch:', error);
+    return res.status(500).json({ 
+      error: 'Failed to fetch token prices',
+      fallback: true
+    });
   }
 });
 

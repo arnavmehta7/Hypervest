@@ -15,7 +15,7 @@
     "test:quick": "node -e \"const {testHealthCheck} = require('./test-script.js'); testHealthCheck().then(console.log);\""
   },
   "dependencies": {
-    "@1inch/limit-order-sdk": "^4.0.0",
+    "@1inch/limit-order-sdk": "^4.13.0",
     "@prisma/client": "^5.6.0",
     "axios": "^1.6.2",
     "bcryptjs": "^2.4.3",

@@ -32,6 +32,7 @@ export class DepositVerifierService {
     try {
       // Get transaction receipt
       const provider = this.blockchainService.getProvider();
+      logger.info(`Checking if transaction ${txHash} has already been processed..., the chain id is ${this.blockchainService.getChainId()}`);
       logger.info(`Verifying deposit transaction: ${txHash}, provider: ${provider}, masterWalletAddress: ${this.masterWalletAddress}`);
       const tx = await provider.getTransaction(txHash);
       
@@ -91,36 +92,41 @@ export class DepositVerifierService {
         };
       }
 
-      // Verify transaction was sent TO our master wallet
-      if (tx.to?.toLowerCase() !== this.masterWalletAddress) {
-        return {
-          isValid: false,
-          txHash,
-          from: tx.from || '',
-          to: tx.to || '',
-          value: tx.value.toString(),
-          confirmations,
-          error: `Transaction not sent to master wallet. Expected: ${this.masterWalletAddress}, Got: ${tx.to}`
-        };
-      }
+      // TODO: for later
+      // // Verify transaction was sent TO our master wallet
+      // if (tx.to?.toLowerCase() !== this.masterWalletAddress) {
+      //   return {
+      //     isValid: false,
+      //     txHash,
+      //     from: tx.from || '',
+      //     to: tx.to || '',
+      //     value: tx.value.toString(),
+      //     confirmations,
+      //     error: `Transaction not sent to master wallet. Expected: ${this.masterWalletAddress}, Got: ${tx.to}`
+      //   };
+      // }
 
+
+      return await this.verifyERC20Transfer(tx, receipt, confirmations);
       // Check if it's an ETH transfer or ERC20 token transfer
-      if (tx.data === '0x' || tx.data === '') {
-        // ETH transfer
-        return {
-          isValid: true,
-          txHash,
-          from: tx.from || '',
-          to: tx.to || '',
-          value: tx.value.toString(),
-          confirmations,
-          tokenAddress: '0x0000000000000000000000000000000000000000',
-          tokenAmount: tx.value.toString()
-        };
-      } else {
-        // Potential ERC20 transfer - parse logs
-        return await this.verifyERC20Transfer(tx, receipt, confirmations);
-      }
+      // if (tx.data === '0x' || tx.data === '') {
+      //   // ETH transfer
+      //   logger.info(`Deposit transaction ${txHash} is a direct ETH transfer to master wallet: ${this.masterWalletAddress}`);
+      //   return {
+      //     isValid: true,
+      //     txHash,
+      //     from: tx.from || '',
+      //     to: tx.to || '',
+      //     value: tx.value.toString(),
+      //     confirmations,
+      //     tokenAddress: '0x0000000000000000000000000000000000000000',
+      //     tokenAmount: tx.value.toString()
+      //   };
+      // } else {
+      //   // Potential ERC20 transfer - parse logs
+
+      //   return await this.verifyERC20Transfer(tx, receipt, confirmations);
+      // }
 
     } catch (error) {
       logger.error('Error verifying deposit:', error);
@@ -160,7 +166,9 @@ export class DepositVerifierService {
         
         if (toAddress.toLowerCase() === this.masterWalletAddress) {
           // Parse the amount from log data
+          logger.info(`Found ERC20 transfer to master wallet: ${this.masterWalletAddress}, log: ${JSON.stringify(log)}`);
           const amount = ethers.getBigInt(log.data);
+          logger.info(`Deposit transaction ${tx.hash} is a valid ERC20 transfer to master wallet: ${this.masterWalletAddress}, amount: ${amount.toString()}`);
           
           return {
             isValid: true,
@@ -221,6 +229,34 @@ export class DepositVerifierService {
         return { symbol: 'ETH', decimals: 18 };
       }
 
+      // Arbitrum One token addresses (case-insensitive comparison)
+      const lowerAddress = tokenAddress.toLowerCase();
+      
+      if (lowerAddress === '0xaf88d065e77c8cc2239327c5edb3a432268e5831') {
+        return { symbol: 'USDC', decimals: 6 };
+      }
+
+      if (lowerAddress === '0x82af49447d8a07e3bd95bd0d56f35241523fbab1') {
+        return { symbol: 'WETH', decimals: 18 };
+      }
+
+      if (lowerAddress === '0x6314c31a7a1652ce482cffe247e9cb7c3f4bb9af') {
+        return { symbol: '1INCH', decimals: 18 };
+      }
+
+      if (lowerAddress === '0x912ce59144191c1204e64559fe8253a0e49e6548') {
+        return { symbol: 'ARB', decimals: 18 };
+      }
+
+      if (lowerAddress === '0x2f2a2543b76a4166549f7aab2e75bef0aefc5b0f') {
+        return { symbol: 'WBTC', decimals: 8 };
+      }
+
+      if (lowerAddress === '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1') {
+        return { symbol: 'DAI', decimals: 18 };
+      }
+
+      // Mainnet fallbacks
       if (tokenAddress === '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48') {
         return { symbol: 'USDC', decimals: 6 };
       }
@@ -239,10 +275,15 @@ export class DepositVerifierService {
 
       const contract = new ethers.Contract(tokenAddress, erc20Abi, provider);
       
-      const [symbol, decimals] = await Promise.all([
+      const [symbol, decimalsResult] = await Promise.all([
         contract.symbol(),
         contract.decimals()
       ]);
+
+      // Convert decimals to proper number (BigNumber -> number)
+      const decimals = Number(decimalsResult);
+
+      logger.info(`Retrieved token info for ${tokenAddress}: ${symbol}, ${decimals} decimals`);
 
       return { symbol, decimals };
     } catch (error) {

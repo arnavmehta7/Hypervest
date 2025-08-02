@@ -54,20 +54,18 @@ router.get('/:id', [
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({ 
-        error: 'Validation failed', 
-        details: errors.array() 
-      });
+      return res.status(400).json({ error: 'Validation failed', details: errors.array() });
     }
 
     const strategy = await prisma.strategy.findFirst({
-      where: { 
+      where: {
         id: req.params.id,
-        userId: req.user!.id 
+        userId: req.user!.id,
       },
       include: {
         executions: {
           orderBy: { executedAt: 'desc' },
+          take: 50,
         },
       },
     });
@@ -79,6 +77,98 @@ router.get('/:id', [
     return res.json({ strategy });
   } catch (error) {
     logger.error('Error fetching strategy:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get transactions for a specific strategy execution
+router.get('/executions/:executionId/transactions', [
+  param('executionId').isUUID().withMessage('Invalid execution ID'),
+], async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: 'Validation failed', details: errors.array() });
+    }
+
+    // First verify the execution belongs to the user
+    const execution = await prisma.strategyExecution.findFirst({
+      where: {
+        id: req.params.executionId,
+        strategy: {
+          userId: req.user!.id,
+        },
+      },
+      include: {
+        strategy: {
+          select: {
+            name: true,
+            type: true,
+          },
+        },
+      },
+    });
+
+    if (!execution) {
+      return res.status(404).json({ error: 'Execution not found' });
+    }
+
+    // Get all transactions for this user that might be related to this execution
+    // For DCA, we look for transactions around the execution time
+    const executionTime = execution.executedAt;
+    const timeRange = 10 * 60 * 1000; // 10 minutes in milliseconds
+    
+    const relatedTransactions = await prisma.transaction.findMany({
+      where: {
+        userId: req.user!.id,
+        type: 'STRATEGY_EXECUTION',
+        createdAt: {
+          gte: new Date(executionTime.getTime() - timeRange),
+          lte: new Date(executionTime.getTime() + timeRange),
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Also include the main transaction hash from the execution
+    const mainTransaction = execution.txHash ? {
+      id: 'main',
+      txHash: execution.txHash,
+      type: 'SWAP',
+      fromToken: execution.fromToken,
+      toToken: execution.toToken,
+      fromAmount: execution.fromAmount,
+      toAmount: execution.toAmount,
+      url: `https://arbiscan.io/tx/${execution.txHash}`,
+      timestamp: execution.executedAt,
+    } : null;
+
+    const formattedTransactions = relatedTransactions.map(tx => ({
+      id: tx.id,
+      txHash: tx.txHash,
+      type: tx.fromToken === tx.toToken ? 'TRANSFER' : 'SWAP',
+      fromToken: tx.fromToken,
+      toToken: tx.toToken,
+      fromAmount: tx.fromAmount,
+      toAmount: tx.toAmount,
+      url: `https://arbiscan.io/tx/${tx.txHash}`,
+      timestamp: tx.createdAt,
+    }));
+
+    const allTransactions = mainTransaction ? [mainTransaction, ...formattedTransactions] : formattedTransactions;
+
+    return res.json({
+      execution: {
+        id: execution.id,
+        status: execution.status,
+        strategyName: execution.strategy.name,
+        strategyType: execution.strategy.type,
+        executedAt: execution.executedAt,
+      },
+      transactions: allTransactions,
+    });
+  } catch (error) {
+    logger.error('Error fetching execution transactions:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -346,6 +436,156 @@ router.post('/:id/execute', [
     return res.json({ message: 'Strategy execution initiated' });
   } catch (error) {
     logger.error('Error executing strategy:', error);
+    if (error instanceof Error) {
+      return res.status(400).json({ error: error.message });
+    } else {
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+});
+
+// Fix next execution time for a strategy
+router.post('/:id/fix-schedule', [
+  param('id').isUUID().withMessage('Invalid strategy ID'),
+], async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        error: 'Validation failed', 
+        details: errors.array() 
+      });
+    }
+
+    const strategy = await prisma.strategy.findFirst({
+      where: { 
+        id: req.params.id,
+        userId: req.user!.id 
+      },
+    });
+
+    if (!strategy) {
+      return res.status(404).json({ error: 'Strategy not found' });
+    }
+
+    if (strategy.type === 'DCA') {
+      // Recalculate next execution time properly
+      const params = strategy.parameters as unknown as DCAParameters;
+      const dcaStrategy = new DCAStrategy();
+      
+      // Use current time as base for recalculation
+      const currentTime = new Date();
+      const cronParser = require('cron-parser');
+      
+      const interval = cronParser.parseExpression(params.frequency, {
+        currentDate: currentTime,
+        tz: 'UTC'
+      });
+      const correctedNextExecution = interval.next().toDate();
+
+      await prisma.strategy.update({
+        where: { id: strategy.id },
+        data: { 
+          nextExecution: correctedNextExecution,
+        },
+      });
+
+      logger.info(`Fixed next execution time for strategy: ${strategy.id} - New time: ${correctedNextExecution.toISOString()}`);
+
+      return res.json({ 
+        message: 'Next execution time fixed successfully',
+        oldNextExecution: strategy.nextExecution?.toISOString(),
+        newNextExecution: correctedNextExecution.toISOString(),
+        frequency: params.frequency,
+      });
+    } else {
+      return res.status(400).json({ error: 'Strategy type not supported' });
+    }
+  } catch (error) {
+    logger.error('Error fixing strategy schedule:', error);
+    if (error instanceof Error) {
+      return res.status(400).json({ error: error.message });
+    } else {
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+});
+
+// Fix strategies that exceeded their limits
+router.post('/:id/fix-limits', [
+  param('id').isUUID().withMessage('Invalid strategy ID'),
+], async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        error: 'Validation failed', 
+        details: errors.array() 
+      });
+    }
+
+    const strategy = await prisma.strategy.findFirst({
+      where: { 
+        id: req.params.id,
+        userId: req.user!.id 
+      },
+    });
+
+    if (!strategy) {
+      return res.status(404).json({ error: 'Strategy not found' });
+    }
+
+    if (strategy.type === 'DCA') {
+      const params = strategy.parameters as unknown as DCAParameters;
+      const targetTotalAmount = new Decimal(params.totalAmount);
+      const hasExceededAmount = strategy.totalInvested.gt(targetTotalAmount);
+      
+      // Check execution count
+      const completedExecutions = await prisma.strategyExecution.count({
+        where: {
+          strategyId: strategy.id,
+          status: 'COMPLETED'
+        }
+      });
+      
+      const hasExceededExecutions = params.maxExecutions && completedExecutions >= params.maxExecutions;
+      
+      if (hasExceededAmount || hasExceededExecutions) {
+        // Mark strategy as completed since it exceeded limits
+        await prisma.strategy.update({
+          where: { id: strategy.id },
+          data: { status: 'COMPLETED' }
+        });
+
+        logger.info(`Fixed strategy ${strategy.id} - marked as COMPLETED due to exceeded limits`);
+
+        return res.json({ 
+          message: 'Strategy marked as completed due to exceeded limits',
+          details: {
+            targetAmount: targetTotalAmount.toString(),
+            actualInvested: strategy.totalInvested.toString(),
+            exceededAmount: hasExceededAmount,
+            maxExecutions: params.maxExecutions,
+            actualExecutions: completedExecutions,
+            exceededExecutions: hasExceededExecutions
+          }
+        });
+      } else {
+        return res.json({ 
+          message: 'Strategy is within limits - no fix needed',
+          details: {
+            targetAmount: targetTotalAmount.toString(),
+            actualInvested: strategy.totalInvested.toString(),
+            maxExecutions: params.maxExecutions,
+            actualExecutions: completedExecutions
+          }
+        });
+      }
+    } else {
+      return res.status(400).json({ error: 'Strategy type not supported' });
+    }
+  } catch (error) {
+    logger.error('Error fixing strategy limits:', error);
     if (error instanceof Error) {
       return res.status(400).json({ error: error.message });
     } else {

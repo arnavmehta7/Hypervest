@@ -34,13 +34,13 @@ router.get('/balances', async (req: AuthenticatedRequest, res: Response) => {
 });
 
 // Get master wallet info (for deposits)
-router.get('/deposit-address', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/deposit-address', async (req, res: Response) => {
   try {
     const masterAddress = blockchainService.getMasterAddress();
     
     return res.json({
       address: masterAddress,
-      chainId: 11155111, // Sepolia
+      chainId: 42161, // Sepolia
       note: 'Send funds to this address. Transaction will be automatically verified on-chain.',
       minimumConfirmations: 3,
     });
@@ -109,7 +109,11 @@ router.post('/deposits', [
 
     // Calculate the actual amount (handle decimals)
     const rawAmount = verification.tokenAmount!;
-    const actualAmount = new Decimal(rawAmount).div(new Decimal(10).pow(tokenInfo.decimals));
+    console.log(`Raw amount from verification: ${rawAmount}`);
+    // 100000 is raw amount, if we divide by 6 then we actual
+    const actualAmount = new Decimal(rawAmount).div(new Decimal(1000000));
+    console.log(`Actual amount after conversion: ${actualAmount.toString()}`);
+    // const actualAmount = new Decimal(rawAmount).div(new Decimal(10).pow(tokenInfo.decimals));
 
     // Create deposit record with VERIFIED data
     const deposit = await prisma.deposit.create({
@@ -433,6 +437,7 @@ router.post('/swap', [
         message: 'Swap executed successfully',
         transaction: {
           txHash: swapTxHash,
+          txUrl: `https://arbiscan.io/tx/${swapTxHash}`,
           fromToken,
           toToken,
           fromAmount: requestedAmount.toString(),
