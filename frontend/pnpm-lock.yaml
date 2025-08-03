@@ -11,6 +11,9 @@ dependencies:
   '@types/axios':
     specifier: ^0.9.36
     version: 0.9.36
+  '@wagmi/core':
+    specifier: ^2.18.1
+    version: 2.18.1(@types/react@18.3.23)(react@18.3.1)(typescript@5.8.3)(viem@2.33.1)
   axios:
     specifier: ^1.11.0
     version: 1.11.0
@@ -1996,6 +1999,30 @@ packages:
 
   /@wagmi/core@2.18.0(@types/react@18.3.23)(react@18.3.1)(typescript@5.8.3)(use-sync-external-store@1.4.0)(viem@2.33.1):
     resolution: {integrity: sha512-33Wc/nnc/Q4qrqSL0F8BIDsG0iFTPrB4avjL/9vIE2DrA3GS3scVnrn6OtxpyF2TrwDZVfA+XUmfvoKuqtWPgw==}
+    peerDependencies:
+      '@tanstack/query-core': '>=5.0.0'
+      typescript: '>=5.0.4'
+      viem: 2.x
+    peerDependenciesMeta:
+      '@tanstack/query-core':
+        optional: true
+      typescript:
+        optional: true
+    dependencies:
+      eventemitter3: 5.0.1
+      mipd: 0.0.7(typescript@5.8.3)
+      typescript: 5.8.3
+      viem: 2.33.1(typescript@5.8.3)(zod@3.22.4)
+      zustand: 5.0.0(@types/react@18.3.23)(react@18.3.1)(use-sync-external-store@1.4.0)
+    transitivePeerDependencies:
+      - '@types/react'
+      - immer
+      - react
+      - use-sync-external-store
+    dev: false
+
+  /@wagmi/core@2.18.1(@types/react@18.3.23)(react@18.3.1)(typescript@5.8.3)(viem@2.33.1):
+    resolution: {integrity: sha512-mU+qXeeY2/0lq8bf4uFm5RtMrc8FgOToqzMVMf6MzNdNbKxpNlmlbuTyRbyd9cxn4UnYa6+S6Bmx1x42FV7w3g==}
     peerDependencies:
       '@tanstack/query-core': '>=5.0.0'
       typescript: '>=5.0.4'
